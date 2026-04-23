@@ -33,7 +33,11 @@ async function selfUpdate(currentVersion: string): Promise<boolean> {
     console.log(pc.yellow(`  ⬆  pd ${currentVersion} → ${latest}, updating...`));
     const result = await Bun.$`bun i -g pi-depo@${latest}`.nothrow();
     if (result.exitCode !== 0) {
-      console.log(pc.red(`  ❌ pd update failed\n`));
+      const errOut = result.stderr.toString() + result.stdout.toString();
+      if (!errOut.includes("No version matching")) {
+        console.log(pc.red(`  ❌ pd update failed\n`));
+      }
+      // else: npm publish is still in progress, skip silently
       return false;
     }
 
