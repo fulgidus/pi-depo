@@ -435,7 +435,7 @@ export async function disablePackage(name: string, reason?: string): Promise<voi
   }
   pkg.rating = "disabled";
   if (reason) pkg.reason = reason;
-  await saveManifest(manifest);
+  await saveManifestFile(manifest);
   console.log(pc.green(`  ✅ ${name} disabled.`));
   await sync();
 }
@@ -450,12 +450,12 @@ export async function enablePackage(name: string): Promise<void> {
   }
   pkg.rating = "useful";
   delete (pkg as Record<string, unknown>).reason;
-  await saveManifest(manifest);
+  await saveManifestFile(manifest);
   console.log(pc.green(`  ✅ ${name} enabled.`));
   await sync();
 }
 
-async function saveManifest(manifest: KitManifest): Promise<void> {
+export async function saveManifestFile(manifest: KitManifest): Promise<void> {
   const { serializeManifest } = await import("./manifest.js");
   await writeFile(kitYmlPath(), serializeManifest(manifest), "utf-8");
 }

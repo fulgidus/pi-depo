@@ -1,8 +1,7 @@
 import { defineCommand, runMain } from "citty";
 import pc from "picocolors";
-import { sync, status, init, disablePackage, enablePackage } from "./sync.js";
+import { sync, status, init, disablePackage, enablePackage, loadManifest, saveManifestFile } from "./sync.js";
 import { login, pushManifest, pullManifest, listProfiles, switchProfile } from "./remote.js";
-import { loadManifest } from "./sync.js";
 import { readFile } from "node:fs/promises";
 import { kitYmlPath } from "./config.js";
 import { VERSION } from "./version.js";
@@ -12,6 +11,10 @@ const main = defineCommand({
     name: "pd",
     version: VERSION,
     description: "Declarative package manager for Pi Coding Agent",
+  },
+  // Default: pd alone = pd sync
+  async run() {
+    await sync();
   },
   subCommands: {
     // ─── Core ───────────────────────────────────────────────
@@ -73,6 +76,71 @@ const main = defineCommand({
           console.log(`  ${ok ? pc.green("✅") : pc.red("❌")} ${name} (mcp-server)`);
         }
         console.log();
+      },
+    }),
+
+    toggle: defineCommand({
+      meta: { name: "toggle", description: "Interactively enable/disable packages" },
+      async run() {
+        const { checkbox } = await import("@inquirer/checkbox");
+        const { inferInstallType } = await import("./manifest.js");
+
+        const manifest = await loadManifest();
+        const all = [
+          ...Object.entries(manifest.packages),
+          ...Object.entries(manifest.mcp_servers),
+        ];
+
+        if (all.length === 0) {
+          console.log(pc.yellow("  No packages in kit.yml."));
+          return;
+        }
+
+        const choices = all.map(([name, pkg]) => ({
+          name: `${name}  ${pc.dim(`(${inferInstallType(pkg)})`)}`,
+          value: name,
+          checked: pkg.rating !== "disabled",
+        }));
+
+        console.log(pc.bold("\n  Toggle packages (space = toggle, enter = apply):\n"));
+
+        let selected: string[];
+        try {
+          selected = await checkbox({
+            message: "Enabled packages",
+            choices,
+            pageSize: Math.min(all.length, 20),
+          });
+        } catch {
+          // user pressed Ctrl+C
+          console.log(pc.dim("  Cancelled."));
+          return;
+        }
+
+        const selectedSet = new Set(selected);
+        let changed = false;
+
+        for (const [name, pkg] of all) {
+          const shouldBeEnabled = selectedSet.has(name);
+          const isEnabled = pkg.rating !== "disabled";
+          if (shouldBeEnabled && !isEnabled) {
+            pkg.rating = "useful";
+            delete (pkg as Record<string, unknown>).reason;
+            changed = true;
+          } else if (!shouldBeEnabled && isEnabled) {
+            pkg.rating = "disabled";
+            changed = true;
+          }
+        }
+
+        if (!changed) {
+          console.log(pc.dim("  No changes."));
+          return;
+        }
+
+        await saveManifestFile(manifest);
+        console.log();
+        await sync();
       },
     }),
 
