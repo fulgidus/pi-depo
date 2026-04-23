@@ -1,0 +1,188 @@
+# ═══════════════════════════════════════════════════════════════════
+# pi-kit manifest — declarative package management for Pi Coding Agent
+# ═══════════════════════════════════════════════════════════════════
+
+meta:
+  pi_version: "0.69.0"
+  home: "~"
+
+remote:
+  provider: github
+  user: fulgidus
+  repo: gists
+  path: pi/kit.yml
+
+# ═══════════════════════════════════════════════════════════════════
+#  PI-NATIVE PACKAGES — installed via `pi install`
+# ═══════════════════════════════════════════════════════════════════
+
+packages:
+  # ── Core ──────────────────────────────────────────────────────
+  pi-guardrails:
+    source: "npm:@aliou/pi-guardrails"
+    rating: core
+
+  # ── Useful ────────────────────────────────────────────────────
+  greedysearch-pi:
+    source: "npm:@apmantza/greedysearch-pi"
+    rating: useful
+
+  pi-web-access:
+    source: "npm:pi-web-access"
+    rating: useful
+
+  pi-docparser:
+    source: "npm:pi-docparser"
+    rating: useful
+
+  # ── Debatable ─────────────────────────────────────────────────
+  oh-pi-agents:
+    source: "npm:@ifi/oh-pi-agents"
+    rating: debatable
+
+  oh-pi-prompts:
+    source: "npm:@ifi/oh-pi-prompts"
+    rating: debatable
+
+  oh-pi-skills:
+    source: "npm:@ifi/oh-pi-skills"
+    rating: debatable
+
+  oh-pi-themes:
+    source: "npm:@ifi/oh-pi-themes"
+    rating: debatable
+
+  pi-extension-subagents:
+    source: "npm:@ifi/pi-extension-subagents"
+    rating: debatable
+
+  pi-plan:
+    source: "npm:@ifi/pi-plan"
+    rating: debatable
+
+  pi-spec:
+    source: "npm:@ifi/pi-spec"
+    rating: debatable
+
+  pi-interview:
+    source: "npm:pi-interview"
+    rating: debatable
+
+  pi-mermaid:
+    source: "npm:pi-mermaid"
+    rating: debatable
+
+  ralphi:
+    source: "npm:@manojlds/ralphi"
+    rating: debatable
+
+  pi-markdown-preview:
+    source: "npm:pi-markdown-preview"
+    rating: debatable
+
+  # ── Eye candy ─────────────────────────────────────────────────
+  pi-powerline-footer:
+    source: "npm:pi-powerline-footer"
+    rating: useful
+
+  pi-animations:
+    source: "npm:pi-animations"
+    rating: debatable
+
+  # ── Useful tools ──────────────────────────────────────────────
+  pi-ask-user:
+    source: "npm:pi-ask-user"
+    rating: useful
+
+  pi-tool-display:
+    source: "npm:pi-tool-display"
+    rating: useful
+
+  pi-annotate:
+    source: "npm:pi-annotate"
+    rating: useful
+
+  # ── Custom install (non-pi-native) ────────────────────────────
+  context-mode:
+    source: "git:github.com/mksglu/context-mode"
+    rating: core
+    type: custom
+    steps:
+      clone: "git clone {{source}} {{home}}/.pi/extensions/context-mode"
+      build: "cd {{home}}/.pi/extensions/context-mode && npm install && npm run build"
+    config_merge:
+      target: "{{home}}/.pi/agent/mcp.json"
+      json: |
+        {
+          "mcpServers": {
+            "context-mode": {
+              "command": "node",
+              "args": ["{{home}}/.pi/extensions/context-mode/node_modules/context-mode/start.mjs"]
+            }
+          }
+        }
+    verify:
+      check: "test -f {{home}}/.pi/extensions/context-mode/node_modules/context-mode/start.mjs"
+      description: "start.mjs exists after build"
+
+  # ── Disabled (with reasons) ───────────────────────────────────
+  pi-prompt-suggester:
+    source: "npm:@guwidoe/pi-prompt-suggester"
+    rating: disabled
+    reason: "SLOW STARTUP (16 Claude API calls on session start) + SILENT AUTO-SUBMIT"
+
+  pi-lens:
+    source: "npm:pi-lens"
+    rating: disabled
+    reason: "Slows startup exponentially with big codebases, benefits not worth it"
+
+  oh-pi:
+    source: "npm:@ifi/oh-pi"
+    rating: disabled
+    reason: "Heavy, has issues, needs global install + extra command"
+
+  oh-pi-extensions:
+    source: "npm:@ifi/oh-pi-extensions"
+    rating: disabled
+    reason: "Conflicts with pi-powerline-footer"
+
+  oh-pi-ant-colony:
+    source: "npm:@ifi/oh-pi-ant-colony"
+    rating: disabled
+    reason: "Debatable design choices causing more problems than benefits"
+
+  pi-mcp-adapter:
+    source: "npm:pi-mcp-adapter"
+    rating: disabled
+    reason: "Don't like MCP — even its creators recused it"
+
+  pi-ollama:
+    source: "npm:@0xkobold/pi-ollama"
+    rating: disabled
+    reason: "Don't need local LLM, adds unwanted ollama dependency"
+
+# ═══════════════════════════════════════════════════════════════════
+#  MCP SERVERS — standalone MCP servers for Pi
+# ═══════════════════════════════════════════════════════════════════
+
+mcp_servers: {}
+  # Example: GitHub MCP server
+  # github:
+  #   source: "npm:@modelcontextprotocol/server-github"
+  #   rating: core
+  #   env:
+  #     GITHUB_PERSONAL_ACCESS_TOKEN: "env:GITHUB_TOKEN"
+  #
+  # Example: Postgres MCP server
+  # postgres:
+  #   source: "npm:@modelcontextprotocol/server-postgres"
+  #   rating: useful
+  #   args:
+  #     - "postgresql://localhost/mydb"
+  #
+  # Example: Local binary
+  # woco-stats:
+  #   source: "local:{{home}}/bin/woco-mcp"
+  #   rating: core
+  #   verify:
+  #     check: "test -x {{home}}/bin/woco-mcp"
