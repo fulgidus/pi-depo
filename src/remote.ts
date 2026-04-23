@@ -6,91 +6,38 @@ import { existsSync } from "node:fs";
 import type { RemoteProvider, PkitConfig } from "./types.js";
 import { loadConfig, saveConfig, remoteRawUrl, remoteApiUrl, PKIT_DIR } from "./config.js";
 
-// ─── GitHub OAuth Device Flow ───────────────────────────────────
-// No client secret needed - public client flow
+// ─── GitHub CLI token extraction ────────────────────────────────
+// Delegates auth entirely to the `gh` CLI - no OAuth App or PAT needed
 
-const GITHUB_CLIENT_ID = "Ov23liAY3TP5fn7d0c9R"; // TODO: register pkit as GitHub OAuth App
-const CODEBERG_CLIENT_ID = "TODO"; // TODO: register on Codeberg
-
-interface DeviceCodeResponse {
-  device_code: string;
-  user_code: string;
-  verification_uri: string;
-  expires_in: number;
-  interval: number;
-}
-
-interface TokenResponse {
-  access_token: string;
-  token_type: string;
-  error?: string;
-}
-
-async function githubDeviceFlow(): Promise<string> {
-  // Step 1: Request device code
-  const res = await fetch("https://github.com/login/device/code", {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      Accept: "application/json",
-    },
-    body: JSON.stringify({
-      client_id: GITHUB_CLIENT_ID,
-      scope: "gist repo",
-    }),
-  });
-
-  if (!res.ok) {
-    throw new Error(`GitHub device code request failed: ${res.status}`);
+async function githubTokenFromCLI(): Promise<string> {
+  // Check gh is installed
+  const whichResult = await $`which gh`.quiet().nothrow();
+  if (whichResult.exitCode !== 0) {
+    throw new Error(
+      "GitHub CLI (gh) is not installed.\n" +
+      "  Install it from https://cli.github.com/ then run: gh auth login"
+    );
   }
 
-  const data = (await res.json()) as DeviceCodeResponse;
-  console.log(`\n  Visit: ${data.verification_uri}`);
-  console.log(`  Code:  ${data.user_code}\n`);
-
-  // Step 2: Poll for token
-  const startTime = Date.now();
-  const expiresIn = data.expires_in * 1000;
-
-  while (Date.now() - startTime < expiresIn) {
-    await new Promise((r) => setTimeout(r, data.interval * 1000));
-
-    const tokenRes = await fetch("https://github.com/login/oauth/access_token", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Accept: "application/json",
-      },
-      body: JSON.stringify({
-        client_id: GITHUB_CLIENT_ID,
-        device_code: data.device_code,
-        grant_type: "urn:ietf:params:oauth:grant-type:device_code",
-      }),
-    });
-
-    const tokenData = (await tokenRes.json()) as TokenResponse;
-
-    if (tokenData.access_token) {
-      return tokenData.access_token;
-    }
-
-    if (tokenData.error === "authorization_pending") {
-      continue; // User hasn't authorized yet
-    }
-
-    if (tokenData.error === "slow_down") {
-      await new Promise((r) => setTimeout(r, 5000));
-      continue;
-    }
-
-    if (tokenData.error === "expired_token") {
-      throw new Error("Device code expired. Please try again.");
-    }
-
-    throw new Error(`Token request failed: ${tokenData.error}`);
+  // Check gh is authenticated
+  const statusResult = await $`gh auth status`.quiet().nothrow();
+  if (statusResult.exitCode !== 0) {
+    throw new Error(
+      "GitHub CLI is not authenticated.\n" +
+      "  Run: gh auth login"
+    );
   }
 
-  throw new Error("Device code expired. Please try again.");
+  // Extract token
+  const tokenResult = await $`gh auth token`.quiet().nothrow();
+  if (tokenResult.exitCode !== 0 || !tokenResult.stdout.toString().trim()) {
+    throw new Error(
+      "Could not retrieve token from GitHub CLI.\n" +
+      "  Try: gh auth login --scopes gist"
+    );
+  }
+
+  return tokenResult.stdout.toString().trim();
 }
 
 // ─── Login command ──────────────────────────────────────────────
@@ -100,7 +47,7 @@ export async function login(provider: RemoteProvider = "github"): Promise<void> 
   let token: string;
   switch (provider) {
     case "github":
-      token = await githubDeviceFlow();
+      token = await githubTokenFromCLI();
       break;
     case "codeberg":
       // TODO: implement Codeberg device flow
