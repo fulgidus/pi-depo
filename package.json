@@ -1,6 +1,6 @@
 {
   "name": "pi-depo",
-  "version": "0.1.20",
+  "version": "0.1.21",
   "description": "Declarative package manager for Pi Coding Agent - skills, extensions, hooks, MCP servers",
   "keywords": [
     "pi-package",
@@ -25,13 +25,13 @@
     "lint": "tsc --noEmit"
   },
   "dependencies": {
-    "@inquirer/checkbox": "^5.1.4",
-    "@inquirer/core": "^11.1.9",
+    "@types/prompts": "^2.4.9",
     "citty": "^0.2.2",
     "consigliere": "^2.0.0",
     "deepmerge": "^4.3.1",
     "js-yaml": "^4.1.0",
-    "picocolors": "^1.1.1"
+    "picocolors": "^1.1.1",
+    "prompts": "^2.4.2"
   },
   "devDependencies": {
     "@types/bun": "^1.2.0",

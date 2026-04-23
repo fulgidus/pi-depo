@@ -12,10 +12,6 @@ const main = defineCommand({
     version: VERSION,
     description: "Declarative package manager for Pi Coding Agent",
   },
-  // Default: pd alone = pd sync
-  async run() {
-    await sync();
-  },
   subCommands: {
     // ─── Core ───────────────────────────────────────────────
     init: defineCommand({
@@ -82,7 +78,7 @@ const main = defineCommand({
     toggle: defineCommand({
       meta: { name: "toggle", description: "Interactively enable/disable packages" },
       async run() {
-        const { checkbox } = await import("@inquirer/checkbox");
+        const prompts = (await import("prompts")).default;
         const { inferInstallType } = await import("./manifest.js");
 
         const manifest = await loadManifest();
@@ -96,28 +92,20 @@ const main = defineCommand({
           return;
         }
 
-        const choices = all.map(([name, pkg]) => ({
-          name: `${name}  ${pc.dim(`(${inferInstallType(pkg)})`)}`,
-          value: name,
-          checked: pkg.rating !== "disabled",
-        }));
+        const { selected } = await prompts({
+          type: "multiselect",
+          name: "selected",
+          message: "Toggle packages  (space = toggle, enter = apply, ctrl+c = cancel)",
+          choices: all.map(([name, pkg]) => ({
+            title: `${name}  ${pc.dim(`(${inferInstallType(pkg)})`)}`,
+            value: name,
+            selected: pkg.rating !== "disabled",
+          })),
+          hint: " ",
+          instructions: false,
+        }, { onCancel: () => process.exit(0) });
 
-        console.log(pc.bold("\n  Toggle packages (space = toggle, enter = apply):\n"));
-
-        let selected: string[];
-        try {
-          selected = await checkbox({
-            message: "Enabled packages",
-            choices,
-            pageSize: Math.min(all.length, 20),
-          });
-        } catch {
-          // user pressed Ctrl+C
-          console.log(pc.dim("  Cancelled."));
-          return;
-        }
-
-        const selectedSet = new Set(selected);
+        const selectedSet = new Set(selected as string[]);
         let changed = false;
 
         for (const [name, pkg] of all) {
@@ -236,4 +224,11 @@ const main = defineCommand({
   },
 });
 
-runMain(main);
+// pd with no subcommand = pd sync
+const subcommands = ["init","sync","status","diff","verify","toggle","upgrade","disable","enable","prune","login","push","pull","profiles","profile"];
+const firstArg = process.argv[2];
+if (!firstArg || (!subcommands.includes(firstArg) && !firstArg.startsWith("-"))) {
+  sync().catch(e => { console.error(e); process.exit(1); });
+} else {
+  runMain(main);
+}
