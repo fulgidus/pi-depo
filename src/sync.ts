@@ -3,27 +3,36 @@ import { readFile, writeFile } from "node:fs/promises";
 import { existsSync } from "node:fs";
 import pc from "picocolors";
 import type { KitManifest, PackageManifest, McpServerManifest, SyncAction, InstallType, KitLock, LockEntry } from "./types.js";
-import { parseManifest, validateManifest, inferInstallType } from "./manifest.js";
-import { loadLock, saveLock, kitYmlPath, loadConfig } from "./config.js";
+import { parseManifest, validateManifest, inferInstallType, parseSource, expandTemplate } from "./manifest.js";
+import { loadLock, saveLock, kitYmlPath, loadConfig, templateVars } from "./config.js";
 import { getProvider } from "./providers.js";
 import { pullManifest } from "./remote.js";
 
 // ─── Self-update check ─────────────────────────────────────────
-async function checkSelfUpdate(currentVersion: string): Promise<void> {
+// ─── Self-update pkit ───────────────────────────────────────────
+async function selfUpdate(currentVersion: string): Promise<boolean> {
   try {
     const res = await fetch("https://registry.npmjs.org/pi-depo/latest", {
       headers: { Accept: "application/json" },
       signal: AbortSignal.timeout(3000),
     });
-    if (!res.ok) return;
+    if (!res.ok) return false;
     const data = (await res.json()) as { version: string };
     const latest = data.version;
-    if (latest && latest !== currentVersion) {
-      console.log(pc.yellow(`  ⬆  pkit ${currentVersion} → ${latest} available: bun i -g pi-depo@${latest}\n`));
+    if (!latest || latest === currentVersion) return false;
+
+    console.log(pc.yellow(`  ⬆  pkit ${currentVersion} → ${latest}, aggiornamento...`));
+    const result = await Bun.$`bun i -g pi-depo@${latest}`.nothrow();
+    if (result.exitCode === 0) {
+      console.log(pc.green(`  ✅ pkit aggiornato a ${latest} - riavvia pkit sync per usare la nuova versione\n`));
+      return true;
+    } else {
+      console.log(pc.red(`  ❌ Aggiornamento pkit fallito\n`));
     }
   } catch {
-    // network unavailable or timeout - silently skip
+    // network unavailable or timeout - skip silently
   }
+  return false;
 }
 
 // ─── Load manifest (gist-first) ─────────────────────────────────
@@ -65,7 +74,7 @@ export async function loadManifest(cwd?: string): Promise<KitManifest> {
 
 // ─── Sync command ───────────────────────────────────────────────
 export async function sync(dryRun = false): Promise<SyncAction[]> {
-  await checkSelfUpdate(VERSION);
+  await selfUpdate(VERSION);
   const manifest = await loadManifest();
   const errors = validateManifest(manifest);
 
@@ -118,7 +127,24 @@ export async function sync(dryRun = false): Promise<SyncAction[]> {
         break;
       }
       case "skip": {
-        console.log(pc.dim(`  ✓ ${action.name} (synced)`));
+        const detail = action.detail ? pc.dim(` (${action.detail})`) : "";
+        console.log(pc.dim(`  ✓ ${action.name}${detail}`));
+        break;
+      }
+      case "upgrade": {
+        const provider = getProvider(action.type);
+        console.log(pc.cyan(`  ⬆  ${action.name} ${action.detail ?? ""}...`));
+        try {
+          const pkg = manifest.packages[action.name] ?? manifest.mcp_servers[action.name];
+          if (pkg) {
+            await provider.install(action.name, pkg);
+            console.log(pc.green(`  ✅ ${action.name} aggiornato`));
+          }
+        } catch (e) {
+          console.log(pc.red(`  ❌ ${action.name}: ${e instanceof Error ? e.message : e}`));
+          action.status = "error";
+          action.detail = e instanceof Error ? e.message : String(e);
+        }
         break;
       }
       case "verify": {
@@ -153,39 +179,95 @@ export async function status(): Promise<void> {
 
 // ─── Get installed pi-native packages (single pi list call) ─────
 async function getInstalledPiPackages(): Promise<Set<string>> {
+  return new Set((await getPiInstalledMap()).keys());
+}
+
+// Returns Map<basename, installPath>
+async function getPiInstalledMap(): Promise<Map<string, string>> {
+  const map = new Map<string, string>();
   try {
     const result = await Bun.$`pi list`.quiet().nothrow();
-    if (result.exitCode !== 0) return new Set();
-
-    const installed = new Set<string>();
+    if (result.exitCode !== 0) return map;
     for (const line of result.stdout.toString().split("\n")) {
       const trimmed = line.trim();
-      // Path lines: /home/.../.../node_modules/@scope/pkg-name  or  /home/.../pkg-name
-      // Take the last path component as the canonical short name
       if (trimmed.startsWith("/")) {
         const parts = trimmed.split("/");
         const basename = parts[parts.length - 1];
-        if (basename) installed.add(basename);
+        if (basename) map.set(basename, trimmed);
       }
     }
-    return installed;
+  } catch { /* ignore */ }
+  return map;
+}
+
+// Read version from package.json at install path
+async function readInstalledVersion(installPath: string): Promise<string | null> {
+  try {
+    const raw = await readFile(`${installPath}/package.json`, "utf-8");
+    const { version } = JSON.parse(raw) as { version?: string };
+    return version ?? null;
   } catch {
-    return new Set();
+    return null;
   }
 }
 
-// ─── Compute actions (async - checks real state) ─────────────────
-async function computeActions(manifest: KitManifest): Promise<SyncAction[]> {
-  // Run pi list once + all custom/skill/mcp verify checks in parallel
-  const piInstalled = await getInstalledPiPackages();
+// Fetch latest version for an npm package spec from registry
+async function fetchLatestNpmVersion(spec: string): Promise<string | null> {
+  try {
+    const res = await fetch(`https://registry.npmjs.org/${encodeURIComponent(spec)}/latest`, {
+      headers: { Accept: "application/json" },
+      signal: AbortSignal.timeout(5000),
+    });
+    if (!res.ok) return null;
+    const data = (await res.json()) as { version?: string };
+    return data.version ?? null;
+  } catch {
+    return null;
+  }
+}
 
-  // Collect all non-pi-native entries that need a verify check
+// ─── Compute actions (async - checks real state + versions) ───────
+async function computeActions(manifest: KitManifest): Promise<SyncAction[]> {
+  const vars = templateVars();
+
+  // 1. pi list once → Map<basename, installPath>
+  const piInstalledMap = await getPiInstalledMap();
+
+  // 2. For pi-native npm packages: read installed version + fetch latest in parallel
+  type NpmCheck = { name: string; pkg: PackageManifest; installPath: string; npmSpec: string; pin?: string };
+  const npmChecks: NpmCheck[] = [];
+
+  for (const [name, pkg] of Object.entries(manifest.packages)) {
+    const type = inferInstallType(pkg);
+    if (type !== "pi-native" || pkg.rating === "disabled") continue;
+    const installPath = piInstalledMap.get(name);
+    if (!installPath) continue; // not installed, will be handled below
+    const parsed = parseSource(expandTemplate(pkg.source, vars));
+    if (parsed.type !== "npm") continue;
+    npmChecks.push({ name, pkg, installPath, npmSpec: parsed.spec, pin: pkg.pin });
+  }
+
+  // Fire all version checks in parallel
+  const [installedVersions, latestVersions] = await Promise.all([
+    Promise.all(npmChecks.map(c => readInstalledVersion(c.installPath))),
+    Promise.all(npmChecks.map(c => c.pin ? Promise.resolve(c.pin) : fetchLatestNpmVersion(c.npmSpec))),
+  ]);
+
+  // Build version state map: name → { installed, latest, outdated }
+  const versionMap = new Map<string, { installed: string | null; latest: string | null; outdated: boolean }>();
+  for (let i = 0; i < npmChecks.length; i++) {
+    const installed = installedVersions[i] ?? null;
+    const latest = latestVersions[i] ?? null;
+    const outdated = !!(installed && latest && installed !== latest);
+    versionMap.set(npmChecks[i]!.name, { installed, latest, outdated });
+  }
+
+  // 3. Parallel verify for non-pi-native
   type PendingEntry =
     | { kind: "pkg"; name: string; pkg: PackageManifest; type: InstallType }
     | { kind: "mcp"; name: string; mcp: McpServerManifest };
 
   const pending: PendingEntry[] = [];
-
   for (const [name, pkg] of Object.entries(manifest.packages)) {
     const type = inferInstallType(pkg);
     if (type !== "pi-native") pending.push({ kind: "pkg", name, pkg, type });
@@ -194,17 +276,14 @@ async function computeActions(manifest: KitManifest): Promise<SyncAction[]> {
     pending.push({ kind: "mcp", name, mcp });
   }
 
-  // Parallel verify for non-pi-native
   const verifyResults = await Promise.all(
     pending.map(async entry => {
       if (entry.kind === "pkg") {
         if (entry.pkg.rating === "disabled") return false;
-        const provider = getProvider(entry.type);
-        return provider.verify(entry.name, entry.pkg);
+        return getProvider(entry.type).verify(entry.name, entry.pkg);
       } else {
         if (entry.mcp.rating === "disabled") return false;
-        const provider = getProvider("mcp-server");
-        return provider.verify(entry.name, entry.mcp);
+        return getProvider("mcp-server").verify(entry.name, entry.mcp);
       }
     })
   );
@@ -212,49 +291,41 @@ async function computeActions(manifest: KitManifest): Promise<SyncAction[]> {
   const verifyMap = new Map<string, boolean>();
   pending.forEach((entry, i) => verifyMap.set(entry.name, verifyResults[i]!));
 
+  // 4. Build actions
   const actions: SyncAction[] = [];
 
-  // Pi-native packages - decided from piInstalled set, no extra I/O
   for (const [name, pkg] of Object.entries(manifest.packages)) {
     const type = inferInstallType(pkg);
-    if (type !== "pi-native") continue;
 
     if (pkg.rating === "disabled") {
-      // Only bother removing if actually installed
-      if (piInstalled.has(name)) {
-        actions.push({ name, type, action: "remove", status: "disabled" });
+      const installed = type === "pi-native" ? piInstalledMap.has(name) : verifyMap.get(name);
+      actions.push({ name, type, action: installed ? "remove" : "skip", status: "disabled" });
+      continue;
+    }
+
+    if (type === "pi-native") {
+      if (!piInstalledMap.has(name)) {
+        actions.push({ name, type, action: "install", status: "missing" });
       } else {
-        actions.push({ name, type, action: "skip", status: "disabled" });
+        const v = versionMap.get(name);
+        if (v?.outdated) {
+          actions.push({ name, type, action: "upgrade", status: "outdated", detail: `${v.installed} → ${v.latest}` });
+        } else {
+          actions.push({ name, type, action: "skip", status: "synced", detail: v?.installed ?? undefined });
+        }
       }
-    } else if (piInstalled.has(name)) {
-      actions.push({ name, type, action: "skip", status: "synced" });
     } else {
-      actions.push({ name, type, action: "install", status: "missing" });
+      const verified = verifyMap.get(name) ?? false;
+      actions.push({ name, type, action: verified ? "skip" : "install", status: verified ? "synced" : "missing" });
     }
   }
 
-  // Non-pi-native packages - decided from parallel verify results
-  for (const [name, pkg] of Object.entries(manifest.packages)) {
-    const type = inferInstallType(pkg);
-    if (type === "pi-native") continue;
-
-    if (pkg.rating === "disabled") {
-      actions.push({ name, type, action: "remove", status: "disabled" });
-    } else if (verifyMap.get(name)) {
-      actions.push({ name, type, action: "skip", status: "synced" });
-    } else {
-      actions.push({ name, type, action: "install", status: "missing" });
-    }
-  }
-
-  // MCP servers
   for (const [name, mcp] of Object.entries(manifest.mcp_servers)) {
     if (mcp.rating === "disabled") {
-      actions.push({ name, type: "mcp-server", action: "remove", status: "disabled" });
-    } else if (verifyMap.get(name)) {
-      actions.push({ name, type: "mcp-server", action: "skip", status: "synced" });
+      actions.push({ name, type: "mcp-server", action: verifyMap.get(name) ? "remove" : "skip", status: "disabled" });
     } else {
-      actions.push({ name, type: "mcp-server", action: "install", status: "missing" });
+      const verified = verifyMap.get(name) ?? false;
+      actions.push({ name, type: "mcp-server", action: verified ? "skip" : "install", status: verified ? "synced" : "missing" });
     }
   }
 
