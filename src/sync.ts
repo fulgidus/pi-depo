@@ -13,7 +13,6 @@ import { pullManifest } from "./remote.js";
 const MAX_UPDATE_ATTEMPTS = 3;
 
 async function selfUpdate(currentVersion: string): Promise<boolean> {
-  // Cap retries to prevent infinite loops (passed via env across restarts)
   const attempt = parseInt(process.env.PKIT_UPDATE_ATTEMPT ?? "0", 10);
   if (attempt >= MAX_UPDATE_ATTEMPTS) {
     console.log(pc.yellow(`  ⚠  pd: update retry limit reached (${MAX_UPDATE_ATTEMPTS}), skipping auto-update`));
@@ -21,34 +20,25 @@ async function selfUpdate(currentVersion: string): Promise<boolean> {
   }
 
   try {
-    const res = await fetch("https://registry.npmjs.org/pi-depo/latest", {
-      headers: { Accept: "application/json" },
-      signal: AbortSignal.timeout(3000),
-    });
-    if (!res.ok) return false;
-    const data = (await res.json()) as { version: string };
-    const latest = data.version;
+    // npm view returns only versions that are actually downloadable
+    const viewResult = await Bun.$`npm view pi-depo version`.quiet().nothrow();
+    if (viewResult.exitCode !== 0) return false;
+    const latest = viewResult.stdout.toString().trim();
     if (!latest || latest === currentVersion) return false;
 
     console.log(pc.yellow(`  ⬆  pd ${currentVersion} → ${latest}, updating...`));
-    const result = await Bun.$`bun i -g pi-depo@${latest}`.nothrow();
+    const result = await Bun.$`npm install -g pi-depo@${latest}`.nothrow();
     if (result.exitCode !== 0) {
-      const errOut = result.stderr.toString() + result.stdout.toString();
-      if (!errOut.includes("No version matching")) {
-        console.log(pc.red(`  ❌ pd update failed\n`));
-      }
-      // else: npm publish is still in progress, skip silently
+      console.log(pc.red(`  ❌ pd update failed\n`));
       return false;
     }
 
-    // Parse installed version directly from bun's output
-    // e.g. "installed pi-depo@0.1.15 with binaries:"
-    const bunOutput = result.stdout.toString() + result.stderr.toString();
-    const match = bunOutput.match(/installed pi-depo@([\d.]+)/);
-    const installedVersion = match?.[1] ?? null;
+    // Parse installed version from npm output
+    const out = result.stdout.toString() + result.stderr.toString();
+    const match = out.match(/pi-depo@([\d.]+)/);
+    const installedVersion = match?.[1] ?? latest;
 
-    if (!installedVersion || installedVersion === currentVersion) {
-      console.log(pc.yellow(`  ⚠  pd: npm publish is lagging (got ${installedVersion ?? "unknown"}), skipping restart`));
+    if (installedVersion === currentVersion) {
       return false;
     }
 
