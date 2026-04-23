@@ -82,7 +82,7 @@ export type RemoteProvider = "github" | "codeberg";
 export interface RemoteConfig {
   provider: RemoteProvider;
   user: string;
-  repo: string; // e.g. "gists" or "pi-kit-config"
+  repo: string; // e.g. "gists" or "pi-depo-config"
   path?: string; // subpath within repo, e.g. "pi/kit.yml"
   branch?: string;
 }
