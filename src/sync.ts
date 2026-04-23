@@ -12,6 +12,39 @@ import { pullManifest } from "./remote.js";
 // ─── Self-update pd ───────────────────────────────────────────
 const MAX_UPDATE_ATTEMPTS = 3;
 
+// ─── Update pi agent itself ─────────────────────────────
+async function updatePiAgent(): Promise<void> {
+  try {
+    const viewResult = await Bun.$`npm view @mariozechner/pi-coding-agent version`.quiet().nothrow();
+    if (viewResult.exitCode !== 0) return;
+    const latest = viewResult.stdout.toString().trim();
+    if (!latest) return;
+
+    const listResult = await Bun.$`npm list -g @mariozechner/pi-coding-agent --json`.quiet().nothrow();
+    let installed: string | null = null;
+    try {
+      const data = JSON.parse(listResult.stdout.toString()) as { dependencies?: Record<string, { version: string }> };
+      installed = data.dependencies?.["@mariozechner/pi-coding-agent"]?.version ?? null;
+    } catch { /* ignore */ }
+
+    if (installed === latest) return;
+    console.log(pc.yellow(`  ⬆  pi ${installed ?? "?"} → ${latest}, updating...`));
+    const result = await Bun.$`npm install -g @mariozechner/pi-coding-agent@${latest}`.nothrow();
+    if (result.exitCode === 0) {
+      console.log(pc.green(`  ✅ pi updated to ${latest}`));
+    } else {
+      console.log(pc.red(`  ❌ pi update failed`));
+    }
+  } catch { /* network unavailable - skip */ }
+}
+
+// ─── Run pi update (git packages + anything not in kit.yml) ───
+async function piUpdate(): Promise<void> {
+  try {
+    await Bun.$`pi update`.nothrow();
+  } catch { /* ignore */ }
+}
+
 async function selfUpdate(currentVersion: string): Promise<boolean> {
   const attempt = parseInt(process.env.PKIT_UPDATE_ATTEMPT ?? "0", 10);
   if (attempt >= MAX_UPDATE_ATTEMPTS) {
@@ -98,7 +131,12 @@ export async function loadManifest(cwd?: string): Promise<KitManifest> {
 // ─── Sync command ───────────────────────────────────────────────
 export async function sync(dryRun = false): Promise<SyncAction[]> {
   await selfUpdate(VERSION);
-  const manifest = await loadManifest();
+  // Update pi agent and run pi update in parallel with manifest load
+  const [manifest] = await Promise.all([
+    loadManifest(),
+    updatePiAgent(),
+    piUpdate(),
+  ]);
   const errors = validateManifest(manifest);
 
   if (errors.length > 0) {
