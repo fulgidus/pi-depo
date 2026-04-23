@@ -1,6 +1,6 @@
 {
   "name": "pi-depo",
-  "version": "0.1.13",
+  "version": "0.1.14",
   "description": "Declarative package manager for Pi Coding Agent - skills, extensions, hooks, MCP servers",
   "keywords": [
     "pi-package",

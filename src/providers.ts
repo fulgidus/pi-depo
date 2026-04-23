@@ -26,11 +26,14 @@ export const piNativeProvider: Provider = {
     }
   },
 
-  async remove(name: string, _pkg: PackageManifest): Promise<void> {
+  async remove(name: string, pkg: PackageManifest): Promise<void> {
     try {
-      await $`pi remove ${name}`.quiet();
+      // pi tracks packages by their source specifier (e.g. npm:pi-mcp-adapter),
+      // not by the short name - use source for removal
+      const source = expandTemplate(pkg.source, templateVars());
+      await $`pi remove ${source}`.quiet().nothrow();
     } catch {
-      // pi remove may fail if not installed - that's fine
+      // ignore
     }
   },
 

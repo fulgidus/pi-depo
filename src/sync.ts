@@ -27,9 +27,9 @@ async function selfUpdate(currentVersion: string): Promise<boolean> {
       console.log(pc.green(`  ✅ pkit updated to ${latest}, restarting...\n`));
       const pkitBin = Bun.which("pkit");
       if (pkitBin) {
-        Bun.spawnSync([pkitBin, ...process.argv.slice(2)], {
-          stdio: ["inherit", "inherit", "inherit"],
-        });
+        // Use Node's spawnSync - Bun.spawnSync uses different stdio API
+        const { spawnSync } = await import("child_process");
+        spawnSync(pkitBin, process.argv.slice(2), { stdio: "inherit" });
       }
       process.exit(0);
     } else {
