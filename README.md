@@ -1,11 +1,11 @@
-# pi-kit
+# pi-depo
 
 Declarative package manager for [Pi Coding Agent](https://github.com/badlogic/pi-mono). Manage skills, extensions, hooks, and MCP servers from a single `kit.yml` — synced across machines via GitHub/Codeberg.
 
 ## Install
 
 ```bash
-bun i -g pi-kit
+bun i -g pi-depo
 ```
 
 ## Quick Start (new machine)
@@ -157,7 +157,7 @@ Available in all string fields:
 
 `pkit` is designed for **zero-friction machine bootstrap**:
 
-1. `bun i -g pi-kit` on any machine
+1. `bun i -g pi-depo` on any machine
 2. `pkit login` → GitHub/Codeberg auth
 3. `pkit sync` → pulls your `kit.yml` from your gist repo, installs everything
 

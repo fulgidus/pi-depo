@@ -1,0 +1,99 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+  id-token: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    env:
+      FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Setup Node
+        uses: actions/setup-node@v6
+        with:
+          node-version: "24"
+          registry-url: "https://registry.npmjs.org"
+
+      - name: Install dependencies
+        run: npm install
+
+      - name: Build
+        run: npm run build
+
+      - name: Verify version matches tag
+        run: |
+          TAG="${GITHUB_REF#refs/tags/v}"
+          PKG_VERSION="$(node -e "console.log(require('./package.json').version)")"
+          if [ "$TAG" != "$PKG_VERSION" ]; then
+            echo "::error::Tag v${TAG} does not match package.json version ${PKG_VERSION}"
+            exit 1
+          fi
+          echo "Version verified: v${TAG}"
+
+      - name: Pack
+        run: npm pack
+
+      - name: Generate changelog
+        id: changelog
+        run: |
+          PREV_TAG=$(git tag --sort=-version:refname | grep '^v' | sed -n '2p')
+          if [ -z "$PREV_TAG" ]; then
+            CHANGELOG=$(git log --oneline --no-decorate)
+          else
+            CHANGELOG=$(git log --oneline --no-decorate "${PREV_TAG}..HEAD")
+          fi
+          {
+            echo "## What's Changed"
+            echo ""
+            echo "$CHANGELOG" | while IFS= read -r line; do
+              echo "- ${line}"
+            done
+            echo ""
+            echo "---"
+            echo ""
+            echo "### Install"
+            echo ""
+            echo "Via bun:"
+            echo ""
+            echo '```sh'
+            echo "bun i -g pi-depo"
+            echo '```'
+            echo ""
+            echo "Via npm:"
+            echo ""
+            echo '```sh'
+            echo "npm install -g pi-depo"
+            echo '```'
+            echo ""
+            echo "Or pin to this version:"
+            echo ""
+            echo '```sh'
+            echo "bun i -g pi-depo@${GITHUB_REF#refs/tags/v}"
+            echo '```'
+          } > RELEASE_BODY.md
+
+      - name: Create GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "${{ github.ref_name }}" \
+            --title "${{ github.ref_name }}" \
+            --notes-file RELEASE_BODY.md \
+            *.tgz
+
+      - name: Publish to npm
+        run: npm publish --access public
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
