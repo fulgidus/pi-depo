@@ -74,6 +74,17 @@ export const customProvider: Provider = {
       const cmd = steps[stepName];
       if (!cmd) continue;
       const expanded = expandTemplate(cmd, vars);
+
+      // For clone step: skip if destination already exists
+      if (stepName === "clone") {
+        const parts = expanded.trim().split(/\s+/);
+        const dest = parts[parts.length - 1];
+        if (dest && existsSync(dest)) {
+          console.log(`  [clone] skipped - ${dest} already exists`);
+          continue;
+        }
+      }
+
       console.log(`  [${stepName}] ${expanded}`);
       try {
         await $`sh -c ${expanded}`.quiet();

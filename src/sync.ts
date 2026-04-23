@@ -22,7 +22,7 @@ async function selfUpdate(currentVersion: string): Promise<boolean> {
     if (!latest || latest === currentVersion) return false;
 
     console.log(pc.yellow(`  ⬆  pkit ${currentVersion} → ${latest}, aggiornamento...`));
-    const result = await Bun.$`bun i -g pi-depo@${latest}`.nothrow();
+    const result = await Bun.$`bun i -g pi-depo@latest`.nothrow();
     if (result.exitCode === 0) {
       console.log(pc.green(`  ✅ pkit aggiornato a ${latest} - riavvia pkit sync per usare la nuova versione\n`));
       return true;
