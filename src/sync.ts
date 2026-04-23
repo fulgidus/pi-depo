@@ -1,6 +1,8 @@
 import { VERSION } from "./version.js";
 import { readFile, writeFile } from "node:fs/promises";
 import { existsSync } from "node:fs";
+import { homedir } from "node:os";
+import { join } from "node:path";
 import pc from "picocolors";
 import type { KitManifest, PackageManifest, McpServerManifest, SyncAction, InstallType, KitLock, LockEntry } from "./types.js";
 import { parseManifest, validateManifest, inferInstallType, parseSource, expandTemplate } from "./manifest.js";
@@ -10,7 +12,27 @@ import { pullManifest } from "./remote.js";
 
 // ─── Self-update check ─────────────────────────────────────────
 // ─── Self-update pkit ───────────────────────────────────────────
+const MAX_UPDATE_ATTEMPTS = 3;
+
+async function getInstalledPkitVersion(): Promise<string | null> {
+  try {
+    const pkgPath = join(homedir(), ".bun", "install", "global", "node_modules", "pi-depo", "package.json");
+    const raw = await readFile(pkgPath, "utf-8");
+    const { version } = JSON.parse(raw) as { version?: string };
+    return version ?? null;
+  } catch {
+    return null;
+  }
+}
+
 async function selfUpdate(currentVersion: string): Promise<boolean> {
+  // Cap retries to prevent infinite loops (passed via env across restarts)
+  const attempt = parseInt(process.env.PKIT_UPDATE_ATTEMPT ?? "0", 10);
+  if (attempt >= MAX_UPDATE_ATTEMPTS) {
+    console.log(pc.yellow(`  ⚠  pkit: update retry limit reached (${MAX_UPDATE_ATTEMPTS}), skipping auto-update`));
+    return false;
+  }
+
   try {
     const res = await fetch("https://registry.npmjs.org/pi-depo/latest", {
       headers: { Accept: "application/json" },
@@ -23,18 +45,29 @@ async function selfUpdate(currentVersion: string): Promise<boolean> {
 
     console.log(pc.yellow(`  ⬆  pkit ${currentVersion} → ${latest}, updating...`));
     const result = await Bun.$`bun i -g pi-depo@latest`.nothrow();
-    if (result.exitCode === 0) {
-      console.log(pc.green(`  ✅ pkit updated to ${latest}, restarting...\n`));
-      const pkitBin = Bun.which("pkit");
-      if (pkitBin) {
-        // Use Node's spawnSync - Bun.spawnSync uses different stdio API
-        const { spawnSync } = await import("child_process");
-        spawnSync(pkitBin, process.argv.slice(2), { stdio: "inherit" });
-      }
-      process.exit(0);
-    } else {
+    if (result.exitCode !== 0) {
       console.log(pc.red(`  ❌ pkit update failed\n`));
+      return false;
     }
+
+    // Verify the install actually changed the version - npm registry
+    // may lag behind the release tag, causing bun to install the old version
+    const installedVersion = await getInstalledPkitVersion();
+    if (!installedVersion || installedVersion === currentVersion) {
+      console.log(pc.yellow(`  ⚠  pkit: registry shows ${latest} but installed is still ${currentVersion} - npm publish may be lagging, skipping restart`));
+      return false;
+    }
+
+    console.log(pc.green(`  ✅ pkit updated to ${installedVersion}, restarting...\n`));
+    const pkitBin = Bun.which("pkit");
+    if (pkitBin) {
+      const { spawnSync } = await import("child_process");
+      spawnSync(pkitBin, process.argv.slice(2), {
+        stdio: "inherit",
+        env: { ...process.env, PKIT_UPDATE_ATTEMPT: String(attempt + 1) },
+      });
+    }
+    process.exit(0);
   } catch {
     // network unavailable or timeout - skip silently
   }
