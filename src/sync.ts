@@ -21,13 +21,19 @@ async function selfUpdate(currentVersion: string): Promise<boolean> {
     const latest = data.version;
     if (!latest || latest === currentVersion) return false;
 
-    console.log(pc.yellow(`  ⬆  pkit ${currentVersion} → ${latest}, aggiornamento...`));
+    console.log(pc.yellow(`  ⬆  pkit ${currentVersion} → ${latest}, updating...`));
     const result = await Bun.$`bun i -g pi-depo@latest`.nothrow();
     if (result.exitCode === 0) {
-      console.log(pc.green(`  ✅ pkit aggiornato a ${latest} - riavvia pkit sync per usare la nuova versione\n`));
-      return true;
+      console.log(pc.green(`  ✅ pkit updated to ${latest}, restarting...\n`));
+      const pkitBin = Bun.which("pkit");
+      if (pkitBin) {
+        Bun.spawnSync([pkitBin, ...process.argv.slice(2)], {
+          stdio: ["inherit", "inherit", "inherit"],
+        });
+      }
+      process.exit(0);
     } else {
-      console.log(pc.red(`  ❌ Aggiornamento pkit fallito\n`));
+      console.log(pc.red(`  ❌ pkit update failed\n`));
     }
   } catch {
     // network unavailable or timeout - skip silently
@@ -138,7 +144,7 @@ export async function sync(dryRun = false): Promise<SyncAction[]> {
           const pkg = manifest.packages[action.name] ?? manifest.mcp_servers[action.name];
           if (pkg) {
             await provider.install(action.name, pkg);
-            console.log(pc.green(`  ✅ ${action.name} aggiornato`));
+            console.log(pc.green(`  ✅ ${action.name} updated`));
           }
         } catch (e) {
           console.log(pc.red(`  ❌ ${action.name}: ${e instanceof Error ? e.message : e}`));

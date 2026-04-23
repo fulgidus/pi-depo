@@ -4,7 +4,8 @@ Rules for AI agents contributing to this project.
 
 ## Formatting Rules
 
-- **Standard dash only**: Never use em-dash (`—`), en-dash (`–`), or any Unicode dash variant. Always use the ASCII hyphen-minus (`-`) character. This applies to code, comments, documentation, commit messages, and prose.
+- **Standard dash only**: Never use em-dash (`-`), en-dash (`-`), or any Unicode dash variant. Always use the ASCII hyphen-minus (`-`) character. This applies to code, comments, documentation, commit messages, and prose.
+- **English only**: All user-facing CLI output (console.log, error messages, status text) must be in English. No exceptions.
 
 ## Project Overview
 
