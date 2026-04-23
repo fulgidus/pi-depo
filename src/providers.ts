@@ -57,6 +57,14 @@ export const piNativeProvider: Provider = {
 export const customProvider: Provider = {
   async install(name: string, pkg: PackageManifest): Promise<void> {
     const vars = templateVars();
+
+    // Resolve {{source}} to the actual URL/path so steps can use it
+    const parsedSource = parseSource(expandTemplate(pkg.source, vars));
+    const sourceUrl = parsedSource.type === "git"
+      ? (parsedSource.spec.includes("://") ? parsedSource.spec : `https://${parsedSource.spec}`)
+      : parsedSource.spec;
+    vars.source = sourceUrl;
+
     const steps = pkg.steps;
     if (!steps) throw new Error(`Custom package ${name} has no steps`);
 
@@ -148,9 +156,9 @@ export const skillProvider: Provider = {
     if (source.type === "git") {
       // Clone to temp, then copy subpath
       const tmpDir = `/tmp/pkit-skill-${name}-${Date.now()}`;
-      const gitUrl = source.url.includes("://")
-        ? source.url
-        : `https://${source.url}`;
+      const gitUrl = source.spec.includes("://")
+        ? source.spec
+        : `https://${source.spec}`;
       const refArg = source.ref ? `--branch ${source.ref}` : "";
 
       try {
