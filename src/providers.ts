@@ -30,7 +30,7 @@ export const piNativeProvider: Provider = {
     try {
       await $`pi remove ${name}`.quiet();
     } catch {
-      // pi remove may fail if not installed — that's fine
+      // pi remove may fail if not installed - that's fine
     }
   },
 

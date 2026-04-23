@@ -1,7 +1,7 @@
 {
   "name": "pi-depo",
-  "version": "0.1.0",
-  "description": "Declarative package manager for Pi Coding Agent — skills, extensions, hooks, MCP servers",
+  "version": "0.1.1",
+  "description": "Declarative package manager for Pi Coding Agent - skills, extensions, hooks, MCP servers",
   "keywords": [
     "pi-package",
     "pi-coding-agent",
@@ -18,7 +18,6 @@
   "main": "./dist/cli.mjs",
   "scripts": {
     "build": "tsup",
-    "prepublishOnly": "bun run build",
     "dev": "bun run --watch src/cli.ts",
     "test": "vitest run",
     "test:watch": "vitest",

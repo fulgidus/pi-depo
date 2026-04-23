@@ -7,7 +7,7 @@ import type { RemoteProvider, PkitConfig } from "./types.js";
 import { loadConfig, saveConfig, remoteRawUrl, remoteApiUrl, PKIT_DIR } from "./config.js";
 
 // ─── GitHub OAuth Device Flow ───────────────────────────────────
-// No client secret needed — public client flow
+// No client secret needed - public client flow
 
 const GITHUB_CLIENT_ID = "Ov23liAY3TP5fn7d0c9R"; // TODO: register pkit as GitHub OAuth App
 const CODEBERG_CLIENT_ID = "TODO"; // TODO: register on Codeberg

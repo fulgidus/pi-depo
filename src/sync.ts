@@ -109,7 +109,7 @@ export async function sync(dryRun = false): Promise<SyncAction[]> {
           if (ok) {
             console.log(pc.green(`  ✓ ${action.name} (verified)`));
           } else {
-            console.log(pc.yellow(`  ⚠ ${action.name} (verify failed — needs reinstall)`));
+            console.log(pc.yellow(`  ⚠ ${action.name} (verify failed - needs reinstall)`));
           }
         }
         break;

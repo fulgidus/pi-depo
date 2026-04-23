@@ -89,7 +89,7 @@ export function validateManifest(manifest: KitManifest): ValidationError[] {
     }
 
     if (installType === "custom" && pkg.steps && !pkg.verify) {
-      // Warning, not error — but we surface it
+      // Warning, not error - but we surface it
       errors.push({ path: `${path}.verify`, message: "Custom package without verify check (recommended)" });
     }
 

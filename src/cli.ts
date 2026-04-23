@@ -29,7 +29,7 @@ const main = defineCommand({
         dry: {
           type: "boolean",
           alias: "d",
-          description: "Dry run — show actions without executing",
+          description: "Dry run - show actions without executing",
           default: false,
         },
       },
