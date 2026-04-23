@@ -39,10 +39,84 @@ async function updatePiAgent(): Promise<void> {
 }
 
 // ─── Run pi update (git packages + anything not in kit.yml) ───
-async function piUpdate(): Promise<void> {
-  try {
-    await Bun.$`pi update`.nothrow();
-  } catch { /* ignore */ }
+// ─── Reconcile orphans (installed via pi but not in kit.yml) ───
+async function reconcileOrphans(manifest: KitManifest): Promise<boolean> {
+  const result = await Bun.$`pi list`.quiet().nothrow();
+  if (result.exitCode !== 0) return false;
+
+  // Parse pi list: source lines (2 spaces) followed by path lines (4 spaces)
+  const lines = result.stdout.toString().split("\n");
+  const piPackages: Array<{ source: string; basename: string }> = [];
+  let currentSource: string | null = null;
+  for (const line of lines) {
+    const trimmed = line.trimEnd();
+    if (!trimmed.trim() || trimmed.trim() === "User packages:") continue;
+    if (trimmed.startsWith("    ")) {
+      // Path line
+      if (currentSource) {
+        const parts = trimmed.trim().split("/");
+        const basename = parts[parts.length - 1]!;
+        if (basename) piPackages.push({ source: currentSource, basename });
+        currentSource = null;
+      }
+    } else if (trimmed.startsWith("  ")) {
+      // Source line
+      currentSource = trimmed.trim();
+    }
+  }
+
+  const kitNames = new Set(Object.keys(manifest.packages));
+  const orphans = piPackages.filter(p => !kitNames.has(p.basename));
+  if (orphans.length === 0) return false;
+
+  console.log(pc.yellow(`\n  Found ${orphans.length} package(s) installed but not in kit.yml:`));
+
+  const prompts = (await import("prompts")).default;
+  let changed = false;
+
+  for (const orphan of orphans) {
+    const { action } = await prompts({
+      type: "select",
+      name: "action",
+      message: `${pc.bold(orphan.basename)} ${pc.dim(orphan.source)}`,
+      choices: [
+        { title: `${pc.green("Add")} as core     (essential, always installed)`, value: "core" },
+        { title: `${pc.cyan("Add")} as useful    (nice to have)`, value: "useful" },
+        { title: `${pc.dim("Add")} as debatable  (optional)`, value: "debatable" },
+        { title: `${pc.red("Remove")}            (pi remove + never track)`, value: "remove" },
+        { title: `${pc.dim("Skip")}              (ask again next sync)`, value: "skip" },
+      ],
+    }, { onCancel: () => process.exit(0) });
+
+    if (!action || action === "skip") continue;
+
+    if (action === "remove") {
+      console.log(pc.dim(`  Removing ${orphan.basename}...`));
+      await Bun.$`pi remove ${orphan.source}`.quiet().nothrow();
+      console.log(pc.green(`  ✅ ${orphan.basename} removed`));
+    } else {
+      manifest.packages[orphan.basename] = { source: orphan.source, rating: action as "core" | "useful" | "debatable" };
+      console.log(pc.green(`  ✅ ${orphan.basename} added as ${action}`));
+      changed = true;
+    }
+  }
+
+  if (changed) {
+    await saveManifestFile(manifest);
+    // Push updated kit.yml to gist
+    try {
+      const { pushManifest } = await import("./remote.js");
+      const { readFile } = await import("node:fs/promises");
+      const { kitYmlPath } = await import("./config.js");
+      const content = await readFile(kitYmlPath(), "utf-8");
+      await pushManifest(content);
+      console.log(pc.green("  ✅ kit.yml pushed to gist"));
+    } catch (e) {
+      console.log(pc.yellow(`  ⚠  Could not push to gist: ${e instanceof Error ? e.message : e}`));
+    }
+  }
+
+  return changed;
 }
 
 async function selfUpdate(currentVersion: string): Promise<boolean> {
@@ -131,11 +205,9 @@ export async function loadManifest(cwd?: string): Promise<KitManifest> {
 // ─── Sync command ───────────────────────────────────────────────
 export async function sync(dryRun = false): Promise<SyncAction[]> {
   await selfUpdate(VERSION);
-  // Update pi agent and run pi update in parallel with manifest load
   const [manifest] = await Promise.all([
     loadManifest(),
     updatePiAgent(),
-    piUpdate(),
   ]);
   const errors = validateManifest(manifest);
 
@@ -228,6 +300,9 @@ export async function sync(dryRun = false): Promise<SyncAction[]> {
   await updateLock(manifest, actions);
 
   console.log(pc.green("\n  Sync complete.\n"));
+
+  if (!dryRun) await reconcileOrphans(manifest);
+
   return actions;
 }
 
