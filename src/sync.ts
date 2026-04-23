@@ -9,14 +9,14 @@ import { getProvider } from "./providers.js";
 import { pullManifest } from "./remote.js";
 
 // ─── Self-update check ─────────────────────────────────────────
-// ─── Self-update pkit ───────────────────────────────────────────
+// ─── Self-update pd ───────────────────────────────────────────
 const MAX_UPDATE_ATTEMPTS = 3;
 
 async function selfUpdate(currentVersion: string): Promise<boolean> {
   // Cap retries to prevent infinite loops (passed via env across restarts)
   const attempt = parseInt(process.env.PKIT_UPDATE_ATTEMPT ?? "0", 10);
   if (attempt >= MAX_UPDATE_ATTEMPTS) {
-    console.log(pc.yellow(`  ⚠  pkit: update retry limit reached (${MAX_UPDATE_ATTEMPTS}), skipping auto-update`));
+    console.log(pc.yellow(`  ⚠  pd: update retry limit reached (${MAX_UPDATE_ATTEMPTS}), skipping auto-update`));
     return false;
   }
 
@@ -30,10 +30,10 @@ async function selfUpdate(currentVersion: string): Promise<boolean> {
     const latest = data.version;
     if (!latest || latest === currentVersion) return false;
 
-    console.log(pc.yellow(`  ⬆  pkit ${currentVersion} → ${latest}, updating...`));
+    console.log(pc.yellow(`  ⬆  pd ${currentVersion} → ${latest}, updating...`));
     const result = await Bun.$`bun i -g pi-depo@${latest}`.nothrow();
     if (result.exitCode !== 0) {
-      console.log(pc.red(`  ❌ pkit update failed\n`));
+      console.log(pc.red(`  ❌ pd update failed\n`));
       return false;
     }
 
@@ -44,15 +44,15 @@ async function selfUpdate(currentVersion: string): Promise<boolean> {
     const installedVersion = match?.[1] ?? null;
 
     if (!installedVersion || installedVersion === currentVersion) {
-      console.log(pc.yellow(`  ⚠  pkit: npm publish is lagging (got ${installedVersion ?? "unknown"}), skipping restart`));
+      console.log(pc.yellow(`  ⚠  pd: npm publish is lagging (got ${installedVersion ?? "unknown"}), skipping restart`));
       return false;
     }
 
-    console.log(pc.green(`  ✅ pkit updated to ${installedVersion}, restarting...\n`));
-    const pkitBin = Bun.which("pd");
-    if (pkitBin) {
+    console.log(pc.green(`  ✅ pd updated to ${installedVersion}, restarting...\n`));
+    const pdBin = Bun.which("pd");
+    if (pdBin) {
       const { spawnSync } = await import("child_process");
-      spawnSync(pkitBin, process.argv.slice(2), {
+      spawnSync(pdBin, process.argv.slice(2), {
         stdio: "inherit",
         env: { ...process.env, PKIT_UPDATE_ATTEMPT: String(attempt + 1) },
       });
@@ -95,8 +95,8 @@ export async function loadManifest(cwd?: string): Promise<KitManifest> {
   // 3. No local, no remote → guide the user
   throw new Error(
     "No kit.yml found. Options:\n" +
-    "  1. Run 'pd login' then 'pkit sync' to pull from your gist repo\n" +
-    "  2. Run 'pkit init' to bootstrap from your current Pi installation\n" +
+    "  1. Run 'pd login' then 'pd sync' to pull from your gist repo\n" +
+    "  2. Run 'pd init' to bootstrap from your current Pi installation\n" +
     "  3. Create kit.yml manually (see docs)"
   );
 }
@@ -511,5 +511,5 @@ export async function init(): Promise<void> {
   await writeFile(kitYmlPath(), content, "utf-8");
 
   console.log(pc.green(`  ✅ Created kit.yml with ${Object.keys(manifest.packages).length} packages.`));
-  console.log(pc.dim("  Review and adjust ratings, then run 'pkit push' to save to your gist.\n"));
+  console.log(pc.dim("  Review and adjust ratings, then run 'pd push' to save to your gist.\n"));
 }

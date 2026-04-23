@@ -169,7 +169,7 @@ export const skillProvider: Provider = {
 
     if (source.type === "git") {
       // Clone to temp, then copy subpath
-      const tmpDir = `/tmp/pkit-skill-${name}-${Date.now()}`;
+      const tmpDir = `/tmp/pd-skill-${name}-${Date.now()}`;
       const gitUrl = source.spec.includes("://")
         ? source.spec
         : `https://${source.spec}`;

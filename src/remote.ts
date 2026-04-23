@@ -104,7 +104,7 @@ export async function pushManifest(kitYmlContent: string): Promise<void> {
   const profile = getActiveProfile(config);
 
   if (!config.auth?.[`${profile.provider}_token`]) {
-    throw new Error(`Not logged in to ${profile.provider}. Run 'pkit login' first.`);
+    throw new Error(`Not logged in to ${profile.provider}. Run 'pd login' first.`);
   }
 
   const token = config.auth[`${profile.provider}_token`]!;
@@ -144,7 +144,7 @@ export async function pullManifest(): Promise<string> {
     if (res.status === 404) {
       throw new Error(
         `No kit.yml found at ${profile.provider}:${profile.user}/${profile.repo}/${kitPath}\n` +
-        `  Push your local manifest first: pkit push`
+        `  Push your local manifest first: pd push`
       );
     }
     throw new Error(`Failed to pull: ${res.status}`);
@@ -160,7 +160,7 @@ function getActiveProfile(config: PkitConfig): NonNullable<PkitConfig["profiles"
   if (!profile) {
     throw new Error(
       `No profile '${name}' configured.\n` +
-      `  Run 'pkit login' to auto-configure, or set up manually in ~/.pkit/config.yml`
+      `  Run 'pd login' to auto-configure, or set up manually in ~/.pkit/config.yml`
     );
   }
   return profile as NonNullable<PkitConfig["profiles"]>[string] & { provider: RemoteProvider; user: string; repo: string };
@@ -209,7 +209,7 @@ async function pushFileToGithub(
   }
 
   const body: Record<string, unknown> = {
-    message: `pkit: update ${path}`,
+    message: `pd: update ${path}`,
     content: Buffer.from(content).toString("base64"),
     branch,
   };
@@ -270,7 +270,7 @@ async function pushFileToCodeberg(
   }
 
   const body: Record<string, unknown> = {
-    message: `pkit: update ${path}`,
+    message: `pd: update ${path}`,
     content: Buffer.from(content).toString("base64"),
     branch,
   };
@@ -305,7 +305,7 @@ export async function listProfiles(): Promise<void> {
   const active = config.active_profile ?? "default";
 
   if (Object.keys(profiles).length === 0) {
-    console.log("  No profiles configured. Run 'pkit login' to create one.");
+    console.log("  No profiles configured. Run 'pd login' to create one.");
     return;
   }
 
