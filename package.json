@@ -1,14 +1,24 @@
 {
-  "name": "pi-kit",
+  "name": "pi-depo",
   "version": "0.1.0",
   "description": "Declarative package manager for Pi Coding Agent — skills, extensions, hooks, MCP servers",
-  "keywords": ["pi-package", "pi-coding-agent", "package-manager"],
+  "keywords": [
+    "pi-package",
+    "pi-coding-agent",
+    "package-manager"
+  ],
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
   "bin": {
-    "pkit": "./dist/cli.mjs"
+    "pkit": "dist/cli.mjs"
   },
   "main": "./dist/cli.mjs",
   "scripts": {
     "build": "tsup",
+    "prepublishOnly": "bun run build",
     "dev": "bun run --watch src/cli.ts",
     "test": "vitest run",
     "test:watch": "vitest",
@@ -35,7 +45,7 @@
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "https://github.com/fulgidus/pi-kit"
+    "url": "git+https://github.com/fulgidus/pi-depo.git"
   },
   "author": "fulgidus"
 }
