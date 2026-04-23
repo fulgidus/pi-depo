@@ -1,6 +1,6 @@
 import { defineCommand, runMain } from "citty";
 import pc from "picocolors";
-import { sync, status, init } from "./sync.js";
+import { sync, status, init, disablePackage, enablePackage } from "./sync.js";
 import { login, pushManifest, pullManifest, listProfiles, switchProfile } from "./remote.js";
 import { loadManifest } from "./sync.js";
 import { readFile } from "node:fs/promises";
@@ -9,7 +9,7 @@ import { VERSION } from "./version.js";
 
 const main = defineCommand({
   meta: {
-    name: "pkit",
+    name: "pd",
     version: VERSION,
     description: "Declarative package manager for Pi Coding Agent",
   },
@@ -80,6 +80,27 @@ const main = defineCommand({
       meta: { name: "upgrade", description: "Update non-pinned packages to latest" },
       async run() {
         console.log(pc.yellow("  Not yet implemented. Use 'pi update' for pi-native packages."));
+      },
+    }),
+
+    disable: defineCommand({
+      meta: { name: "disable", description: "Disable a package (sets rating=disabled in kit.yml and syncs)" },
+      args: {
+        name: { type: "positional", description: "Package name", required: true },
+        reason: { type: "string", alias: "r", description: "Reason for disabling" },
+      },
+      async run({ args }) {
+        await disablePackage(args.name as string, args.reason as string | undefined);
+      },
+    }),
+
+    enable: defineCommand({
+      meta: { name: "enable", description: "Enable a previously disabled package and sync" },
+      args: {
+        name: { type: "positional", description: "Package name", required: true },
+      },
+      async run({ args }) {
+        await enablePackage(args.name as string);
       },
     }),
 

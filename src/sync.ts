@@ -49,7 +49,7 @@ async function selfUpdate(currentVersion: string): Promise<boolean> {
     }
 
     console.log(pc.green(`  ✅ pkit updated to ${installedVersion}, restarting...\n`));
-    const pkitBin = Bun.which("pkit");
+    const pkitBin = Bun.which("pd");
     if (pkitBin) {
       const { spawnSync } = await import("child_process");
       spawnSync(pkitBin, process.argv.slice(2), {
@@ -95,7 +95,7 @@ export async function loadManifest(cwd?: string): Promise<KitManifest> {
   // 3. No local, no remote → guide the user
   throw new Error(
     "No kit.yml found. Options:\n" +
-    "  1. Run 'pkit login' then 'pkit sync' to pull from your gist repo\n" +
+    "  1. Run 'pd login' then 'pkit sync' to pull from your gist repo\n" +
     "  2. Run 'pkit init' to bootstrap from your current Pi installation\n" +
     "  3. Create kit.yml manually (see docs)"
   );
@@ -422,6 +422,42 @@ async function updateLock(manifest: KitManifest, actions: SyncAction[]): Promise
   }
 
   await saveLock(lock);
+}
+
+// ─── Disable / Enable commands ─────────────────────────────────
+export async function disablePackage(name: string, reason?: string): Promise<void> {
+  const manifest = await loadManifest();
+  const pkg = manifest.packages[name] ?? manifest.mcp_servers[name];
+  if (!pkg) throw new Error(`Package '${name}' not found in kit.yml`);
+  if (pkg.rating === "disabled") {
+    console.log(pc.yellow(`  ${name} is already disabled.`));
+    return;
+  }
+  pkg.rating = "disabled";
+  if (reason) pkg.reason = reason;
+  await saveManifest(manifest);
+  console.log(pc.green(`  ✅ ${name} disabled.`));
+  await sync();
+}
+
+export async function enablePackage(name: string): Promise<void> {
+  const manifest = await loadManifest();
+  const pkg = manifest.packages[name] ?? manifest.mcp_servers[name];
+  if (!pkg) throw new Error(`Package '${name}' not found in kit.yml`);
+  if (pkg.rating !== "disabled") {
+    console.log(pc.yellow(`  ${name} is already enabled (rating: ${pkg.rating}).`));
+    return;
+  }
+  pkg.rating = "useful";
+  delete (pkg as Record<string, unknown>).reason;
+  await saveManifest(manifest);
+  console.log(pc.green(`  ✅ ${name} enabled.`));
+  await sync();
+}
+
+async function saveManifest(manifest: KitManifest): Promise<void> {
+  const { serializeManifest } = await import("./manifest.js");
+  await writeFile(kitYmlPath(), serializeManifest(manifest), "utf-8");
 }
 
 // ─── Init command ───────────────────────────────────────────────
