@@ -76,7 +76,7 @@ export const customProvider: Provider = {
       const expanded = expandTemplate(cmd, vars);
       console.log(`  [${stepName}] ${expanded}`);
       try {
-        await $`${expanded}`.quiet();
+        await $`sh -c ${expanded}`.quiet();
       } catch (e) {
         throw new Error(`Step '${stepName}' failed for ${name}: ${e}`);
       }
@@ -132,7 +132,7 @@ export const customProvider: Provider = {
     const vars = templateVars();
     const cmd = expandTemplate(pkg.verify.check, vars);
     try {
-      await $`${cmd}`.quiet();
+      await $`sh -c ${cmd}`.quiet();
       return true;
     } catch {
       return false;
@@ -282,7 +282,7 @@ export const mcpServerProvider: Provider = {
       const vars = templateVars();
       const cmd = expandTemplate(mcp.verify.check, vars);
       try {
-        await $`${cmd}`.quiet();
+        await $`sh -c ${cmd}`.quiet();
         return true;
       } catch {
         return false;
