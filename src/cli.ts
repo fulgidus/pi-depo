@@ -6,7 +6,7 @@ import { loadManifest } from "./sync.js";
 import { readFile } from "node:fs/promises";
 import { kitYmlPath } from "./config.js";
 
-const VERSION = "0.1.1";
+const VERSION = "0.1.2";
 
 const main = defineCommand({
   meta: {
