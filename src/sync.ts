@@ -1,3 +1,4 @@
+import { VERSION } from "./version.js";
 import { readFile, writeFile } from "node:fs/promises";
 import { existsSync } from "node:fs";
 import pc from "picocolors";
@@ -6,6 +7,24 @@ import { parseManifest, validateManifest, inferInstallType } from "./manifest.js
 import { loadLock, saveLock, kitYmlPath, loadConfig } from "./config.js";
 import { getProvider } from "./providers.js";
 import { pullManifest } from "./remote.js";
+
+// ─── Self-update check ─────────────────────────────────────────
+async function checkSelfUpdate(currentVersion: string): Promise<void> {
+  try {
+    const res = await fetch("https://registry.npmjs.org/pi-depo/latest", {
+      headers: { Accept: "application/json" },
+      signal: AbortSignal.timeout(3000),
+    });
+    if (!res.ok) return;
+    const data = (await res.json()) as { version: string };
+    const latest = data.version;
+    if (latest && latest !== currentVersion) {
+      console.log(pc.yellow(`  ⬆  pkit ${currentVersion} → ${latest} available: bun i -g pi-depo@${latest}\n`));
+    }
+  } catch {
+    // network unavailable or timeout - silently skip
+  }
+}
 
 // ─── Load manifest (gist-first) ─────────────────────────────────
 export async function loadManifest(cwd?: string): Promise<KitManifest> {
@@ -46,6 +65,7 @@ export async function loadManifest(cwd?: string): Promise<KitManifest> {
 
 // ─── Sync command ───────────────────────────────────────────────
 export async function sync(dryRun = false): Promise<SyncAction[]> {
+  await checkSelfUpdate(VERSION);
   const manifest = await loadManifest();
   const errors = validateManifest(manifest);
 
@@ -57,7 +77,7 @@ export async function sync(dryRun = false): Promise<SyncAction[]> {
     console.log();
   }
 
-  const actions = computeActions(manifest);
+  const actions = await computeActions(manifest);
 
   if (dryRun) {
     printActions(actions);
@@ -127,58 +147,118 @@ export async function sync(dryRun = false): Promise<SyncAction[]> {
 // ─── Status command ─────────────────────────────────────────────
 export async function status(): Promise<void> {
   const manifest = await loadManifest();
-  const actions = computeActions(manifest);
+  const actions = await computeActions(manifest);
   printActions(actions);
 }
 
-// ─── Compute actions ────────────────────────────────────────────
-function computeActions(manifest: KitManifest): SyncAction[] {
-  const actions: SyncAction[] = [];
+// ─── Get installed pi-native packages (single pi list call) ─────
+async function getInstalledPiPackages(): Promise<Set<string>> {
+  try {
+    const result = await Bun.$`pi list`.quiet().nothrow();
+    if (result.exitCode !== 0) return new Set();
 
-  // Process packages
+    const installed = new Set<string>();
+    for (const line of result.stdout.toString().split("\n")) {
+      const trimmed = line.trim();
+      // Path lines: /home/.../.../node_modules/@scope/pkg-name  or  /home/.../pkg-name
+      // Take the last path component as the canonical short name
+      if (trimmed.startsWith("/")) {
+        const parts = trimmed.split("/");
+        const basename = parts[parts.length - 1];
+        if (basename) installed.add(basename);
+      }
+    }
+    return installed;
+  } catch {
+    return new Set();
+  }
+}
+
+// ─── Compute actions (async - checks real state) ─────────────────
+async function computeActions(manifest: KitManifest): Promise<SyncAction[]> {
+  // Run pi list once + all custom/skill/mcp verify checks in parallel
+  const piInstalled = await getInstalledPiPackages();
+
+  // Collect all non-pi-native entries that need a verify check
+  type PendingEntry =
+    | { kind: "pkg"; name: string; pkg: PackageManifest; type: InstallType }
+    | { kind: "mcp"; name: string; mcp: McpServerManifest };
+
+  const pending: PendingEntry[] = [];
+
   for (const [name, pkg] of Object.entries(manifest.packages)) {
     const type = inferInstallType(pkg);
-    actions.push({
-      name,
-      type,
-      action: computeActionForPkg(name, pkg, type),
-      status: computeStatusForPkg(name, pkg, type),
-    });
+    if (type !== "pi-native") pending.push({ kind: "pkg", name, pkg, type });
+  }
+  for (const [name, mcp] of Object.entries(manifest.mcp_servers)) {
+    pending.push({ kind: "mcp", name, mcp });
   }
 
-  // Process MCP servers
+  // Parallel verify for non-pi-native
+  const verifyResults = await Promise.all(
+    pending.map(async entry => {
+      if (entry.kind === "pkg") {
+        if (entry.pkg.rating === "disabled") return false;
+        const provider = getProvider(entry.type);
+        return provider.verify(entry.name, entry.pkg);
+      } else {
+        if (entry.mcp.rating === "disabled") return false;
+        const provider = getProvider("mcp-server");
+        return provider.verify(entry.name, entry.mcp);
+      }
+    })
+  );
+
+  const verifyMap = new Map<string, boolean>();
+  pending.forEach((entry, i) => verifyMap.set(entry.name, verifyResults[i]!));
+
+  const actions: SyncAction[] = [];
+
+  // Pi-native packages - decided from piInstalled set, no extra I/O
+  for (const [name, pkg] of Object.entries(manifest.packages)) {
+    const type = inferInstallType(pkg);
+    if (type !== "pi-native") continue;
+
+    if (pkg.rating === "disabled") {
+      // Only bother removing if actually installed
+      if (piInstalled.has(name)) {
+        actions.push({ name, type, action: "remove", status: "disabled" });
+      } else {
+        actions.push({ name, type, action: "skip", status: "disabled" });
+      }
+    } else if (piInstalled.has(name)) {
+      actions.push({ name, type, action: "skip", status: "synced" });
+    } else {
+      actions.push({ name, type, action: "install", status: "missing" });
+    }
+  }
+
+  // Non-pi-native packages - decided from parallel verify results
+  for (const [name, pkg] of Object.entries(manifest.packages)) {
+    const type = inferInstallType(pkg);
+    if (type === "pi-native") continue;
+
+    if (pkg.rating === "disabled") {
+      actions.push({ name, type, action: "remove", status: "disabled" });
+    } else if (verifyMap.get(name)) {
+      actions.push({ name, type, action: "skip", status: "synced" });
+    } else {
+      actions.push({ name, type, action: "install", status: "missing" });
+    }
+  }
+
+  // MCP servers
   for (const [name, mcp] of Object.entries(manifest.mcp_servers)) {
-    actions.push({
-      name,
-      type: "mcp-server",
-      action: computeActionForMcp(name, mcp),
-      status: computeStatusForMcp(name, mcp),
-    });
+    if (mcp.rating === "disabled") {
+      actions.push({ name, type: "mcp-server", action: "remove", status: "disabled" });
+    } else if (verifyMap.get(name)) {
+      actions.push({ name, type: "mcp-server", action: "skip", status: "synced" });
+    } else {
+      actions.push({ name, type: "mcp-server", action: "install", status: "missing" });
+    }
   }
 
   return actions;
-}
-
-function computeActionForPkg(name: string, pkg: PackageManifest, type: InstallType): SyncAction["action"] {
-  if (pkg.rating === "disabled") return "remove";
-  // For now, always attempt install if not verified
-  // A more sophisticated version would check lock + verify
-  return "install";
-}
-
-function computeStatusForPkg(name: string, pkg: PackageManifest, type: InstallType): SyncAction["status"] {
-  if (pkg.rating === "disabled") return "disabled";
-  return "missing"; // Will be refined by actual verify
-}
-
-function computeActionForMcp(name: string, mcp: McpServerManifest): SyncAction["action"] {
-  if (mcp.rating === "disabled") return "remove";
-  return "install";
-}
-
-function computeStatusForMcp(name: string, mcp: McpServerManifest): SyncAction["status"] {
-  if (mcp.rating === "disabled") return "disabled";
-  return "missing";
 }
 
 // ─── Print actions ──────────────────────────────────────────────
