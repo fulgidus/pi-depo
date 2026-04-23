@@ -1,8 +1,6 @@
 import { VERSION } from "./version.js";
 import { readFile, writeFile } from "node:fs/promises";
 import { existsSync } from "node:fs";
-import { homedir } from "node:os";
-import { join } from "node:path";
 import pc from "picocolors";
 import type { KitManifest, PackageManifest, McpServerManifest, SyncAction, InstallType, KitLock, LockEntry } from "./types.js";
 import { parseManifest, validateManifest, inferInstallType, parseSource, expandTemplate } from "./manifest.js";
@@ -13,17 +11,6 @@ import { pullManifest } from "./remote.js";
 // ─── Self-update check ─────────────────────────────────────────
 // ─── Self-update pkit ───────────────────────────────────────────
 const MAX_UPDATE_ATTEMPTS = 3;
-
-async function getInstalledPkitVersion(): Promise<string | null> {
-  try {
-    const pkgPath = join(homedir(), ".bun", "install", "global", "node_modules", "pi-depo", "package.json");
-    const raw = await readFile(pkgPath, "utf-8");
-    const { version } = JSON.parse(raw) as { version?: string };
-    return version ?? null;
-  } catch {
-    return null;
-  }
-}
 
 async function selfUpdate(currentVersion: string): Promise<boolean> {
   // Cap retries to prevent infinite loops (passed via env across restarts)
@@ -50,11 +37,14 @@ async function selfUpdate(currentVersion: string): Promise<boolean> {
       return false;
     }
 
-    // Verify the install actually changed the version - npm registry
-    // may lag behind the release tag, causing bun to install the old version
-    const installedVersion = await getInstalledPkitVersion();
+    // Parse installed version directly from bun's output
+    // e.g. "installed pi-depo@0.1.15 with binaries:"
+    const bunOutput = result.stdout.toString() + result.stderr.toString();
+    const match = bunOutput.match(/installed pi-depo@([\d.]+)/);
+    const installedVersion = match?.[1] ?? null;
+
     if (!installedVersion || installedVersion === currentVersion) {
-      console.log(pc.yellow(`  ⚠  pkit: registry shows ${latest} but installed is still ${currentVersion} - npm publish may be lagging, skipping restart`));
+      console.log(pc.yellow(`  ⚠  pkit: npm publish is lagging (got ${installedVersion ?? "unknown"}), skipping restart`));
       return false;
     }
 
