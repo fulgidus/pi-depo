@@ -50,7 +50,6 @@ export async function login(provider: RemoteProvider = "github"): Promise<void> 
       token = await githubTokenFromCLI();
       break;
     case "codeberg":
-      // TODO: implement Codeberg device flow
       throw new Error("Codeberg login not yet implemented. Use GitHub for now.");
     default:
       throw new Error(`Unknown provider: ${provider}`);
@@ -60,21 +59,25 @@ export async function login(provider: RemoteProvider = "github"): Promise<void> 
   if (!config.auth) config.auth = {};
   config.auth[`${provider}_token`] = token;
 
-  // Auto-detect user profile
   const user = await fetchUser(provider, token);
   console.log(`  Authenticated as: ${user}`);
 
-  // Auto-setup profile with user's gists repo
   if (!config.profiles) config.profiles = {};
   if (!config.profiles.default) {
-    config.profiles.default = {
-      provider,
-      user,
-      repo: "gists",
-      path: "pi/kit.yml",
-    };
+    config.profiles.default = { provider, user, repo: "gists", path: "pi/kit.yml" };
     config.active_profile = "default";
-    console.log(`  Auto-configured profile 'default' → ${provider}:${user}/gists`);
+  }
+
+  // Auto-discover existing gist with kit.yml on this account
+  if (provider === "github" && !config.profiles.default.gist_id) {
+    console.log("  Searching for existing kit.yml gist...");
+    const gistId = await findKitGist(token, config.profiles.default.path ?? "pi/kit.yml");
+    if (gistId) {
+      config.profiles.default.gist_id = gistId;
+      console.log(`  Found existing gist: ${gistId}`);
+    } else {
+      console.log("  No existing gist found - will create one on first 'pd push'.");
+    }
   }
 
   await saveConfig(config);
