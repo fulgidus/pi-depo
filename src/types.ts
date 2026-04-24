@@ -154,5 +154,6 @@ export interface PkitConfig {
     repo: string;
     path?: string;
     branch?: string;
+    gist_id?: string; // GitHub Gist ID, set after first push
   }>;
 }

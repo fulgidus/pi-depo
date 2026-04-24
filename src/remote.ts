@@ -109,14 +109,23 @@ export async function pushManifest(kitYmlContent: string): Promise<void> {
 
   const token = config.auth[`${profile.provider}_token`]!;
   const lockContent = await readLocalLock();
+  const kitPath = profile.path ?? "pi/kit.yml";
 
-  switch (profile.provider) {
-    case "github":
-      await pushToGithub(token, profile.user, profile.repo, profile.path ?? "pi/kit.yml", profile.branch ?? "main", kitYmlContent, lockContent);
-      break;
-    case "codeberg":
-      await pushToCodeberg(token, profile.user, profile.repo, profile.path ?? "pi/kit.yml", profile.branch ?? "main", kitYmlContent, lockContent);
-      break;
+  if (profile.provider === "github" && profile.repo === "gists") {
+    const gistId = await pushToGithubGist(token, kitPath, kitYmlContent, lockContent, profile.gist_id);
+    if (gistId && gistId !== profile.gist_id) {
+      profile.gist_id = gistId;
+      await saveConfig(config);
+    }
+  } else {
+    switch (profile.provider) {
+      case "github":
+        await pushToGithub(token, profile.user, profile.repo, kitPath, profile.branch ?? "main", kitYmlContent, lockContent);
+        break;
+      case "codeberg":
+        await pushToCodeberg(token, profile.user, profile.repo, kitPath, profile.branch ?? "main", kitYmlContent, lockContent);
+        break;
+    }
   }
 
   console.log("  ✅ Pushed to remote.\n");
@@ -126,30 +135,23 @@ export async function pushManifest(kitYmlContent: string): Promise<void> {
 export async function pullManifest(): Promise<string> {
   const config = await loadConfig();
   const profile = getActiveProfile(config);
-
   const token = config.auth?.[`${profile.provider}_token`];
-  const headers: Record<string, string> = {
-    Accept: "application/json",
-  };
-  if (token) {
-    headers.Authorization = `token ${token}`;
+  const kitPath = profile.path ?? "pi/kit.yml";
+
+  if (profile.provider === "github" && profile.repo === "gists") {
+    if (!token) throw new Error("Not logged in to github. Run 'pd login' first.");
+    return await pullFromGithubGist(token, kitPath, profile.gist_id);
   }
 
-  const kitPath = profile.path ?? "pi/kit.yml";
+  const headers: Record<string, string> = { Accept: "application/json" };
+  if (token) headers.Authorization = `token ${token}`;
+
   const url = remoteRawUrl(profile.provider, profile.user, profile.repo, kitPath, profile.branch ?? "main");
-
   const res = await fetch(url, { headers });
-
   if (!res.ok) {
-    if (res.status === 404) {
-      throw new Error(
-        `No kit.yml found at ${profile.provider}:${profile.user}/${profile.repo}/${kitPath}\n` +
-        `  Push your local manifest first: pd push`
-      );
-    }
+    if (res.status === 404) throw new Error(`No kit.yml found at ${profile.provider}:${profile.user}/${profile.repo}/${kitPath}\n  Push your local manifest first: pd push`);
     throw new Error(`Failed to pull: ${res.status}`);
   }
-
   return await res.text();
 }
 
