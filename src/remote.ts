@@ -147,6 +147,14 @@ export async function pullManifest(): Promise<string> {
 
   if (profile.provider === "github" && profile.repo === "gists") {
     if (!token) throw new Error("Not logged in to github. Run 'pd login' first.");
+    // Auto-discover gist_id if missing (e.g. logged in before gist feature)
+    if (!profile.gist_id) {
+      const discovered = await findKitGist(token, kitPath);
+      if (discovered) {
+        profile.gist_id = discovered;
+        await saveConfig(config);
+      }
+    }
     return await pullFromGithubGist(token, kitPath, profile.gist_id);
   }
 
