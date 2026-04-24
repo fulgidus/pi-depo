@@ -119,8 +119,8 @@ export async function pushManifest(kitYmlContent: string): Promise<void> {
   const kitPath = profile.path ?? "pi-depo.yml";
 
   if (profile.provider === "github" && profile.repo === "gists") {
-    // Ask visibility on first push
-    if (profile.gist_id === undefined && profile.public === undefined) {
+    // Ask visibility on first push OR if gist was deleted (gist_id exists but will be recreated)
+    if (profile.public === undefined) {
       const prompts = (await import("prompts")).default;
       const { isPublic } = await prompts({
         type: "confirm",
@@ -228,8 +228,9 @@ async function pushToGithubGist(
     const res = await fetch(`https://api.github.com/gists/${existingGistId}`, {
       method: "PATCH", headers, body: JSON.stringify({ files, description }),
     });
-    if (!res.ok) throw new Error(`Gist update failed: ${res.status} ${await res.text()}`);
-    return existingGistId;
+    if (res.ok) return existingGistId;
+    if (res.status !== 404) throw new Error(`Gist update failed: ${res.status} ${await res.text()}`);
+    // 404 = gist was deleted - fall through to create a new one
   }
   const res = await fetch("https://api.github.com/gists", {
     method: "POST", headers,

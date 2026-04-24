@@ -1,5 +1,5 @@
 meta:
-  pi_version: 0.69.0
+  pi_version: 0.70.0
   home: "~"
 remote:
   provider: github
