@@ -82,6 +82,10 @@ export async function login(provider: RemoteProvider = "github"): Promise<void> 
 
   await saveConfig(config);
   console.log("  ✅ Login saved.\n");
+
+  // Auto-sync after login
+  const { sync } = await import("./sync.js");
+  await sync();
 }
 
 async function fetchUser(provider: RemoteProvider, token: string): Promise<string> {

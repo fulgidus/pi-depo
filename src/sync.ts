@@ -168,37 +168,31 @@ async function selfUpdate(currentVersion: string): Promise<boolean> {
 // ─── Load manifest (gist-first) ─────────────────────────────────
 export async function loadManifest(cwd?: string): Promise<KitManifest> {
   const localPath = kitYmlPath(cwd);
+  const config = await loadConfig();
+  const isLoggedIn = !!(config.auth?.github_token || config.auth?.codeberg_token);
 
-  // 1. Try local kit.yml first
+  if (isLoggedIn) {
+    // Always pull from gist when logged in - gist is the source of truth
+    try {
+      const remoteContent = await pullManifest();
+      await writeFile(localPath, remoteContent, "utf-8");
+      return parseManifest(remoteContent);
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      console.log(pc.yellow(`  Could not pull from gist (${msg}), falling back to local file.`));
+    }
+  }
+
+  // Not logged in (or pull failed) - use local file
   if (existsSync(localPath)) {
     const content = await readFile(localPath, "utf-8");
     return parseManifest(content);
   }
 
-  // 2. No local file → try pulling from remote
-  console.log(pc.yellow("  No kit.yml found locally."));
-
-  const config = await loadConfig();
-  if (config.auth?.github_token || config.auth?.codeberg_token) {
-    console.log(pc.dim("  Pulling from remote..."));
-    try {
-      const remoteContent = await pullManifest();
-      // Save locally
-      await writeFile(localPath, remoteContent, "utf-8");
-      console.log(pc.green("  ✅ Pulled kit.yml from remote and saved locally."));
-      return parseManifest(remoteContent);
-    } catch (e) {
-      const msg = e instanceof Error ? e.message : String(e);
-      console.log(pc.red(`  Failed to pull: ${msg}`));
-    }
-  }
-
-  // 3. No local, no remote → guide the user
   throw new Error(
     "No kit.yml found. Options:\n" +
-    "  1. Run 'pd login' then 'pd sync' to pull from your gist repo\n" +
-    "  2. Run 'pd init' to bootstrap from your current Pi installation\n" +
-    "  3. Create kit.yml manually (see docs)"
+    "  1. Run 'pd login' to authenticate and pull your config\n" +
+    "  2. Run 'pd init' to bootstrap from your current Pi installation"
   );
 }
 
