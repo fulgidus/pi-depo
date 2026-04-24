@@ -617,14 +617,15 @@ async function addCustomPackage(source: string, rating: "core" | "useful" | "deb
   const defaultCloneDir = `{{home}}/.pi/extensions/${name}`;
 
   console.log(pc.dim(`\n  Configuring custom install for ${name}...`));
-  console.log(pc.dim(`  Use {{home}} for home dir, {{source}} for the git URL.\n`));
+  console.log(pc.dim(`  Use {{home}} for home dir, {{source}} for the git URL.`));
+  console.log(pc.dim(`  Suggested clone: git clone ${gitUrl} ${defaultCloneDir}\n`));
 
   const answers = await prompts([
     {
       type: "text",
       name: "clone",
-      message: "Clone step:",
-      initial: `git clone ${gitUrl} ${defaultCloneDir}`,
+      message: "Clone step (empty to skip):",
+      initial: "",
     },
     {
       type: "text",
@@ -642,7 +643,7 @@ async function addCustomPackage(source: string, rating: "core" | "useful" | "deb
       type: "text",
       name: "verify",
       message: "Verify command (shell cmd, exit 0 = ok, empty to skip):",
-      initial: `test -d ${defaultCloneDir}`,
+      initial: "",
     },
   ], { onCancel: () => process.exit(0) });
 
