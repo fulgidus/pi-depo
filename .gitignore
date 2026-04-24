@@ -4,3 +4,7 @@ dist/
 .DS_Store
 kit.lock.json
 .pkit/
+agentic-stack
+browser-harness
+diagram-design
+REPOS_ANALYSIS.md
