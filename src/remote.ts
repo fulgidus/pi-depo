@@ -176,6 +176,52 @@ function getActiveProfile(config: PkitConfig): NonNullable<PkitConfig["profiles"
 }
 
 // ─── GitHub push (via Contents API) ─────────────────────────────
+// ─── GitHub Gists API ─────────────────────────────────────────────
+async function findKitGist(token: string, kitPath: string): Promise<string | null> {
+  const fileName = kitPath.replace(/\//g, "_");
+  try {
+    const res = await fetch("https://api.github.com/gists?per_page=100", {
+      headers: { Authorization: `token ${token}`, Accept: "application/vnd.github+json" },
+    });
+    if (!res.ok) return null;
+    const gists = await res.json() as Array<{ id: string; files: Record<string, unknown> }>;
+    return gists.find(g => fileName in g.files)?.id ?? null;
+  } catch { return null; }
+}
+
+async function pushToGithubGist(
+  token: string, kitPath: string, kitYmlContent: string,
+  lockContent: string | null, existingGistId?: string
+): Promise<string> {
+  const fileName = kitPath.replace(/\//g, "_");
+  const files: Record<string, { content: string }> = { [fileName]: { content: kitYmlContent } };
+  if (lockContent) {
+    files[kitPath.replace(/kit\.yml$/, "kit.lock.json").replace(/\//g, "_")] = { content: lockContent };
+  }
+  const headers = { Authorization: `token ${token}`, Accept: "application/vnd.github+json", "Content-Type": "application/json" };
+  if (existingGistId) {
+    const res = await fetch(`https://api.github.com/gists/${existingGistId}`, { method: "PATCH", headers, body: JSON.stringify({ files }) });
+    if (!res.ok) throw new Error(`Gist update failed: ${res.status} ${await res.text()}`);
+    return existingGistId;
+  }
+  const res = await fetch("https://api.github.com/gists", { method: "POST", headers, body: JSON.stringify({ files, public: false, description: "pd - pi-depo config" }) });
+  if (!res.ok) throw new Error(`Gist create failed: ${res.status} ${await res.text()}`);
+  return (await res.json() as { id: string }).id;
+}
+
+async function pullFromGithubGist(token: string, kitPath: string, gistId?: string): Promise<string> {
+  if (!gistId) throw new Error("No gist ID configured. Run 'pd push' first.");
+  const res = await fetch(`https://api.github.com/gists/${gistId}`, {
+    headers: { Authorization: `token ${token}`, Accept: "application/vnd.github+json" },
+  });
+  if (!res.ok) throw new Error(`Failed to pull gist: ${res.status}`);
+  const data = await res.json() as { files: Record<string, { content: string }> };
+  const file = data.files[kitPath.replace(/\//g, "_")];
+  if (!file) throw new Error(`File not found in gist ${gistId}`);
+  return file.content;
+}
+
+
 async function pushToGithub(
   token: string,
   owner: string,
