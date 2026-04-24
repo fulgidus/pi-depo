@@ -561,6 +561,43 @@ export async function saveManifestFile(manifest: KitManifest): Promise<void> {
   await writeFile(kitYmlPath(), serializeManifest(manifest), "utf-8");
 }
 
+// ─── Add command ───────────────────────────────────────────
+export async function addPackage(source: string, rating: "core" | "useful" | "debatable" = "useful"): Promise<void> {
+  // Normalize: bare name -> npm:name
+  const normalizedSource = source.includes(":") ? source : `npm:${source}`;
+
+  // Derive name: last path segment of the specifier
+  const spec = normalizedSource.replace(/^(npm:|git:|local:)/, "");
+  const name = spec.split("/").pop()?.split("@")[0] ?? spec;
+
+  const manifest = await loadManifest();
+  if (manifest.packages[name]) {
+    console.log(pc.yellow(`  ${name} is already in kit.yml (rating: ${manifest.packages[name].rating}).`));
+    return;
+  }
+
+  // Install via pi
+  console.log(pc.cyan(`  Installing ${name}...`));
+  const result = await Bun.$`pi install ${normalizedSource}`.nothrow();
+  if (result.exitCode !== 0) {
+    throw new Error(`pi install failed for ${normalizedSource}`);
+  }
+
+  // Add to kit.yml
+  manifest.packages[name] = { source: normalizedSource, rating };
+  await saveManifestFile(manifest);
+  console.log(pc.green(`  ✅ ${name} added as ${rating}.`));
+
+  // Push to gist
+  try {
+    const { pushManifest } = await import("./remote.js");
+    const content = await readFile(kitYmlPath(), "utf-8");
+    await pushManifest(content);
+  } catch (e) {
+    console.log(pc.yellow(`  ⚠  Could not push to gist: ${e instanceof Error ? e.message : e}`));
+  }
+}
+
 // ─── Init command ───────────────────────────────────────────────
 export async function init(): Promise<void> {
   console.log(pc.bold("\n  Bootstrapping kit.yml from current Pi installation...\n"));

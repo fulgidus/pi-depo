@@ -1,6 +1,6 @@
 import { defineCommand, runMain } from "citty";
 import pc from "picocolors";
-import { sync, status, init, disablePackage, enablePackage, loadManifest, saveManifestFile } from "./sync.js";
+import { sync, status, init, disablePackage, enablePackage, loadManifest, saveManifestFile, addPackage } from "./sync.js";
 import { login, pushManifest, pullManifest, listProfiles, switchProfile } from "./remote.js";
 import { readFile } from "node:fs/promises";
 import { kitYmlPath } from "./config.js";
@@ -136,6 +136,17 @@ const main = defineCommand({
       meta: { name: "upgrade", description: "Update non-pinned packages to latest" },
       async run() {
         console.log(pc.yellow("  Not yet implemented. Use 'pi update' for pi-native packages."));
+      },
+    }),
+
+    add: defineCommand({
+      meta: { name: "add", description: "Install a package, add to kit.yml and push to gist" },
+      args: {
+        source: { type: "positional", description: "Package source (e.g. npm:foo, git:github.com/user/repo, or just foo)", required: true },
+        rating: { type: "string", alias: "r", description: "Rating: core, useful (default), debatable", default: "useful" },
+      },
+      async run({ args }) {
+        await addPackage(args.source as string, (args.rating as "core" | "useful" | "debatable") ?? "useful");
       },
     }),
 
