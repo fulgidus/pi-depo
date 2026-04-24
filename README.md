@@ -1,6 +1,7 @@
-# pi-depo
+# pi-depo (`pd`)
 
-Declarative package manager for [Pi Coding Agent](https://github.com/badlogic/pi-mono). Manage skills, extensions, hooks, and MCP servers from a single `kit.yml`, synced across machines via GitHub/Codeberg.
+Declarative package manager for [Pi Coding Agent](https://github.com/badlogic/pi-mono).  
+Manage skills, extensions, and MCP servers from a single `kit.yml`, synced across machines via GitHub Gist.
 
 ## Install
 
@@ -8,192 +9,124 @@ Declarative package manager for [Pi Coding Agent](https://github.com/badlogic/pi
 bun i -g pi-depo
 ```
 
-## Quick Start (new machine)
+## Bootstrap flows
+
+### New machine - your own config
 
 ```bash
-pkit login              # Authenticate with GitHub
-pkit sync               # No kit.yml? Pulls from your gist repo + installs everything
+pd login      # Authenticate with GitHub (uses gh CLI) - auto-syncs after login
 ```
 
-## Quick Start (existing machine)
+That's it. `pd login` finds your existing gist, pulls `kit.yml`, and installs everything.
+
+### New machine - borrow someone's public config
 
 ```bash
-pkit init               # Bootstrap kit.yml from current `pi list`
-# Review kit.yml, adjust ratings
-pkit push               # Save to your gist repo for cross-machine sync
+pd login
+pd init
+# → "Bootstrap from someone's public gist?" → y
+# → "GitHub username or username/profile:" → fulgidus
+# → imports their kit.yml, offers to sync immediately
 ```
 
-## Commands
+### First time ever
 
-### Core
+```bash
+pd login      # authenticate
+pd init       # scan current pi installation → generate kit.yml
+              # OR import from a friend's public gist
+pd push       # save to your GitHub Gist (asks public/private once)
+```
 
-| Command | Description |
-|---------|-------------|
-| `pkit init` | Bootstrap `kit.yml` from current Pi installation |
-| `pkit sync` | Desired state → real state. Idempotent. |
-| `pkit status` | Show package status (synced/missing/disabled/orphan) |
-| `pkit diff` | Dry-run sync - show what would change |
-| `pkit verify` | Run verify checks for all packages |
-| `pkit upgrade` | Update non-pinned packages to latest |
-| `pkit prune` | Remove packages not in kit.yml |
+## Daily usage
 
-### Remote (gist-first)
+```bash
+pd                    # sync everything (default command)
+pd sync               # same
 
-| Command | Description |
-|---------|-------------|
-| `pkit login` | Authenticate with GitHub/Codeberg (OAuth device flow) |
-| `pkit push` | Upload `kit.yml` + `kit.lock.json` to gist repo |
-| `pkit pull` | Download `kit.yml` from gist repo |
-| `pkit profiles` | List configured profiles (work, personal, etc.) |
-| `pkit profile <name>` | Switch active profile |
+pd a npm:some-package          # install + add to kit.yml + push gist
+pd a git:github.com/user/repo  # git package (asks: pi-native or skill?)
+pd a git:github.com/user/repo -s skills/my-skill  # skill with subpath, no prompt
+pd rm some-package             # uninstall + remove from kit.yml + push gist
 
-## kit.yml Format
+pd toggle             # interactive TUI to enable/disable packages
+pd disable foo        # disable a package (keeps it in kit.yml as disabled)
+pd enable foo         # re-enable a disabled package
+```
 
-Four package types, one manifest:
+## What `pd sync` does (in order)
+
+1. **Self-update** - checks npm for a newer `pi-depo`, installs and restarts if found
+2. **Update pi** - checks npm for a newer `@mariozechner/pi-coding-agent`, installs if found
+3. **Pull gist** - always pulls `kit.yml` from your gist (gist = source of truth)
+4. **Sync packages** - installs missing, upgrades outdated, removes disabled
+5. **Reconcile orphans** - detects packages installed via `pi` but not in `kit.yml`, asks: add or remove
+6. **Push gist** - if anything changed, saves `kit.yml` and pushes
+
+## Gist
+
+- Gist files: `pi-depo.yml` + `pi-depo.lock.json`
+- Gist description: `pi-depo-<profile>` (e.g. `pi-depo-default`)
+- Public gists can be shared: `pd init` → enter `username` or `username/profile`
+- Public/private is asked once on first `pd push`, stored in `~/.pkit/config.yml`
+
+## kit.yml example
 
 ```yaml
 meta:
-  pi_version: "0.69.0"
-  home: "~"
-
-remote:
-  provider: github        # or codeberg
-  user: fulgidus
-  repo: gists             # your gists repo
-  path: pi/kit.yml        # path within repo
+  pi_version: "0.70.0"
 
 packages:
-  # ── pi-native: installed via `pi install` ──
   pi-guardrails:
     source: "npm:@aliou/pi-guardrails"
-    rating: core           # core | useful | debatable | disabled
-
-  tokenjuice:
-    source: "npm:tokenjuice"
     rating: core
-    pin: "0.3.0"          # pinned version, skipped by upgrade
+
+  caveman:
+    source: "git:git@github.com:JuliusBrussee/caveman.git"
+    rating: useful
 
   diagram-design:
-    source: "git:github.com/cathrynlattery/diagram-design"
-    rating: useful
-
-  # ── custom: declarative install sequence ──
-  context-mode:
-    source: "git:github.com/mksglu/context-mode"
-    rating: core
-    type: custom
-    steps:
-      clone: "git clone {{source}} {{home}}/.pi/extensions/context-mode"
-      build: "cd {{home}}/.pi/extensions/context-mode && npm install && npm run build"
-    config_merge:
-      target: "{{home}}/.pi/agent/mcp.json"
-      json: |
-        {
-          "mcpServers": {
-            "context-mode": {
-              "command": "node",
-              "args": ["{{home}}/.pi/extensions/context-mode/node_modules/context-mode/start.mjs"]
-            }
-          }
-        }
-    verify:
-      check: "test -f {{home}}/.pi/extensions/context-mode/node_modules/context-mode/start.mjs"
-
-  # ── skill: deploy SKILL.md to target ──
-  my-custom-skill:
-    source: "git:github.com/someone/skill-repo"
-    rating: useful
+    source: "git:github.com/cathrynlavery/diagram-design"
     type: skill
-    skill_subpath: "skills/my-skill"
-    target: "{{home}}/.pi/agent/skills/my-skill"
+    skill_subpath: "skills/diagram-design"
+    rating: debatable
 
-  # ── disabled: with reason ──
-  pi-lens:
-    source: "npm:pi-lens"
+  some-old-package:
+    source: "npm:some-old-package"
     rating: disabled
-    reason: "Slows startup exponentially with big codebases"
-
-mcp_servers:
-  github:
-    source: "npm:@modelcontextprotocol/server-github"
-    rating: core
-    env:
-      GITHUB_PERSONAL_ACCESS_TOKEN: "env:GITHUB_TOKEN"    # resolved from process.env
-
-  postgres:
-    source: "npm:@modelcontextprotocol/server-postgres"
-    rating: useful
-    args:
-      - "postgresql://localhost/mydb"
-
-  woco-stats:
-    source: "local:{{home}}/bin/woco-mcp"
-    rating: core
-    verify:
-      check: "test -x {{home}}/bin/woco-mcp"
+    reason: "Replaced by better-package"
 ```
-
-## Template Variables
-
-Available in all string fields:
-
-| Variable | Resolves to |
-|----------|-------------|
-| `{{home}}` | `$HOME` |
-| `{{user}}` | `$USER` |
-| `{{cwd}}` | Current working directory |
-| `{{source}}` | The package's source URL (after expansion) |
 
 ## Ratings
 
-| Rating | Meaning | Sync behavior |
-|--------|---------|---------------|
-| `core` | Must-have | Always installed |
-| `useful` | Good to have | Installed |
-| `debatable` | Try it out | Installed |
-| `disabled` | Removed/avoid | Removed if present, reason logged |
+| Rating | Meaning |
+|--------|---------|
+| `core` | Essential - always installed |
+| `useful` | Nice to have |
+| `debatable` | Optional, experimental |
+| `disabled` | Kept for reference, not installed |
 
-## Gist-First Philosophy
-
-`pkit` is designed for **zero-friction machine bootstrap**:
-
-1. `bun i -g pi-depo` on any machine
-2. `pkit login` → GitHub/Codeberg auth
-3. `pkit sync` → pulls your `kit.yml` from your gist repo, installs everything
-
-No repo to clone, no git workflow, no branch management. Your manifest lives in a file in your `gists` repo. Push/pull is one command.
-
-Multiple profiles? `pkit profile work` switches to your work gist.
-
-## Architecture
+## Commands
 
 ```
-pkit sync flow:
-  1. Load kit.yml (local or pull from remote)
-  2. Validate manifest
-  3. For each entry → resolve provider → compute action
-  4. Execute actions (install/remove/verify)
-  5. Update kit.lock.json
+pd / pd sync          Sync everything (self-update + pi update + install + reconcile)
+pd init               Bootstrap kit.yml from pi list, or import from a public gist
+pd add / pd a         Install a package, add to kit.yml, push gist
+pd remove / pd rm     Uninstall, remove from kit.yml, push gist
+pd toggle             Interactive TUI to enable/disable packages
+pd disable <name>     Disable a package
+pd enable <name>      Enable a disabled package
+pd push               Push kit.yml to gist
+pd pull               Pull kit.yml from gist
+pd login              Authenticate with GitHub (auto-syncs after)
+pd status             Show package status
+pd diff               Dry-run sync (show what would change)
+pd verify             Run verify checks for all packages
+pd profiles           List configured profiles
+pd profile <name>     Switch active profile
 ```
 
-**Provider system:**
+## Config location
 
-| Provider | Install | Verify | Config |
-|----------|---------|--------|--------|
-| `pi-native` | `pi install` | `pi list` | `settings.json` |
-| `custom` | Sequential steps | Shell check | Deep merge into target |
-| `skill` | Clone + copy subpath | SKILL.md exists | None |
-| `mcp-server` | `npm i -g` or local | Binary/config check | Deep merge into `mcp.json` |
-
-## Development
-
-```bash
-bun install
-bun run dev -- --help    # Run locally
-bun run build            # Build for production
-bun test                 # Run tests
-```
-
-## License
-
-MIT
+- Config: `~/.pkit/config.yml`
+- Local kit: `./kit.yml` (in current directory)

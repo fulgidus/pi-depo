@@ -703,6 +703,28 @@ export async function addPackage(
 
 // ─── Init command ───────────────────────────────────────────────
 export async function init(): Promise<void> {
+  const prompts = (await import("prompts")).default;
+
+  // Ask if they want to bootstrap from a public gist
+  const { fromGist } = await prompts({
+    type: "confirm",
+    name: "fromGist",
+    message: "Bootstrap from someone's public gist? (e.g. a friend's config)",
+    initial: false,
+  }, { onCancel: () => process.exit(0) });
+
+  if (fromGist) {
+    const { ref } = await prompts({
+      type: "text",
+      name: "ref",
+      message: "GitHub username or username/profile (e.g. fulgidus or fulgidus/work):",
+    }, { onCancel: () => process.exit(0) });
+    if (ref?.trim()) {
+      await initFromPublicGist(ref.trim());
+      return;
+    }
+  }
+
   console.log(pc.bold("\n  Bootstrapping kit.yml from current Pi installation...\n"));
 
   // Read pi list output
@@ -714,43 +736,88 @@ export async function init(): Promise<void> {
     console.log(pc.yellow("  ⚠ Pi not found or not installed. Creating empty kit.yml."));
   }
 
-  // Parse installed packages
-  const installedPackages = piListOutput
-    .split("\n")
-    .map((line) => line.trim())
-    .filter(Boolean);
-
+  // Parse: source lines (2 spaces indent) followed by path lines (4 spaces)
+  const lines = piListOutput.split("\n");
   const manifest: KitManifest = {
-    meta: {
-      pi_version: "0.69.0",
-      home: "~",
-    },
+    meta: { pi_version: undefined, home: "~" },
     packages: {},
     mcp_servers: {},
   };
 
-  // Add installed packages
-  for (const pkg of installedPackages) {
-    // Try to detect source type from the line
-    if (pkg.startsWith("npm:")) {
-      manifest.packages[pkg.replace("npm:", "").split("@")[0]!] = {
-        source: pkg,
-        rating: "useful",
-      };
-    } else if (pkg.startsWith("git:")) {
-      const name = pkg.split("/").pop()?.split("@")[0] ?? pkg;
-      manifest.packages[name] = {
-        source: pkg,
-        rating: "useful",
-      };
+  let currentSource: string | null = null;
+  for (const line of lines) {
+    if (line.startsWith("    ")) {
+      // Path line - we have source + path, add to manifest
+      if (currentSource) {
+        const parts = line.trim().split("/");
+        const name = parts[parts.length - 1]!;
+        if (name && !manifest.packages[name]) {
+          manifest.packages[name] = { source: currentSource, rating: "useful" };
+        }
+        currentSource = null;
+      }
+    } else if (line.startsWith("  ") && line.trim()) {
+      currentSource = line.trim();
     }
   }
 
-  // Write kit.yml
+  // Get current pi version
+  try {
+    const r = await Bun.$`npm list -g @mariozechner/pi-coding-agent --json`.quiet().nothrow();
+    const data = JSON.parse(r.stdout.toString()) as { dependencies?: Record<string, { version: string }> };
+    const v = data.dependencies?.["@mariozechner/pi-coding-agent"]?.version;
+    if (v) manifest.meta.pi_version = v;
+  } catch { /* ignore */ }
+
   const { serializeManifest } = await import("./manifest.js");
   const content = serializeManifest(manifest);
   await writeFile(kitYmlPath(), content, "utf-8");
 
   console.log(pc.green(`  ✅ Created kit.yml with ${Object.keys(manifest.packages).length} packages.`));
   console.log(pc.dim("  Review and adjust ratings, then run 'pd push' to save to your gist.\n"));
+}
+
+async function initFromPublicGist(ref: string): Promise<void> {
+  // ref = "username" or "username/profile"
+  const [user, profileName = "default"] = ref.split("/");
+  const gistFile = "pi-depo.yml";
+  const legacyFile = "pi_kit.yml";
+
+  console.log(pc.dim(`  Searching for pi-depo-${profileName} gist by ${user}...`));
+
+  // Search public gists by user
+  const res = await fetch(`https://api.github.com/users/${user}/gists?per_page=100`);
+  if (!res.ok) throw new Error(`Could not fetch gists for ${user}: ${res.status}`);
+
+  const gists = await res.json() as Array<{ id: string; description: string; public: boolean; files: Record<string, { content?: string; raw_url: string }> }>;
+  const target = gists.find(g =>
+    (g.description === `pi-depo-${profileName}` || g.description === `pd - pi-depo config`) &&
+    g.public &&
+    (gistFile in g.files || legacyFile in g.files)
+  );
+
+  if (!target) {
+    throw new Error(`No public pi-depo-${profileName} gist found for user ${user}.\n  Make sure their gist is public and named 'pi-depo-${profileName}'.`);
+  }
+
+  // Fetch content
+  const fileEntry = target.files[gistFile] ?? target.files[legacyFile];
+  const raw_url = fileEntry!.raw_url;
+  const contentRes = await fetch(raw_url);
+  if (!contentRes.ok) throw new Error(`Failed to fetch gist content: ${contentRes.status}`);
+  const content = await contentRes.text();
+
+  await writeFile(kitYmlPath(), content, "utf-8");
+  console.log(pc.green(`  ✅ Imported config from ${user}'s pi-depo-${profileName} gist (${target.id}).`));
+  console.log(pc.dim("  Review kit.yml, adjust to your needs, then run 'pd push' to save your own copy.\n"));
+
+  // Offer to sync immediately
+  const prompts = (await import("prompts")).default;
+  const { doSync } = await prompts({
+    type: "confirm",
+    name: "doSync",
+    message: "Sync now (install everything from this config)?",
+    initial: true,
+  }, { onCancel: () => process.exit(0) });
+  if (doSync) await sync();
 }
