@@ -604,9 +604,15 @@ export async function addPackage(source: string, rating: "core" | "useful" | "de
 
   // Install via pi
   console.log(pc.cyan(`  Installing ${name}...`));
-  const result = await Bun.$`pi install ${normalizedSource}`.nothrow();
+  const result = await Bun.$`pi install ${normalizedSource}`.quiet().nothrow();
   if (result.exitCode !== 0) {
-    throw new Error(`pi install failed for ${normalizedSource}`);
+    const raw = result.stderr.toString() + result.stdout.toString();
+    // Pick the single most informative line
+    const lines = raw.split("\n").map(l => l.replace(/^npm error /, "").trim()).filter(Boolean);
+    const useful = lines.find(l => l.includes("404") || l.includes("403") || l.includes("Not found") || l.includes("failed"))
+      ?? lines[0] ?? "install failed";
+    console.log(pc.red(`  ❌ ${name}: ${useful}`));
+    return;
   }
 
   // Add to kit.yml

@@ -125,3 +125,6 @@ packages:
   pi-llm-wiki:
     source: npm:pi-llm-wiki
     rating: useful
+  tokenjuice:
+    source: npm:tokenjuice
+    rating: useful
