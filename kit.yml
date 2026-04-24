@@ -128,6 +128,3 @@ packages:
   tokenjuice:
     source: npm:tokenjuice
     rating: useful
-  agentic-stack:
-    source: git:github.com/codejunkie99/agentic-stack
-    rating: useful
