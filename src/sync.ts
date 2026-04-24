@@ -20,19 +20,16 @@ async function updatePiAgent(): Promise<string | null> {
     const latest = viewResult.stdout.toString().trim();
     if (!latest) return null;
 
-    const listResult = await Bun.$`npm list -g @mariozechner/pi-coding-agent --json`.quiet().nothrow();
-    let installed: string | null = null;
-    try {
-      const data = JSON.parse(listResult.stdout.toString()) as { dependencies?: Record<string, { version: string }> };
-      installed = data.dependencies?.["@mariozechner/pi-coding-agent"]?.version ?? null;
-    } catch { /* ignore */ }
+    // Use pi --version to get installed version (works with vp-managed installs)
+    const versionResult = await Bun.$`pi --version`.quiet().nothrow();
+    const installed = versionResult.exitCode === 0 ? versionResult.stdout.toString().trim() : null;
 
-    if (installed === latest) return installed; // already up to date, return current version
+    if (installed === latest) return installed;
     console.log(pc.yellow(`  ⬆  pi ${installed ?? "?"} → ${latest}, updating...`));
     const result = await Bun.$`npm install -g @mariozechner/pi-coding-agent@${latest}`.nothrow();
     if (result.exitCode === 0) {
       console.log(pc.green(`  ✅ pi updated to ${latest}`));
-      return latest; // return new version
+      return latest;
     } else {
       console.log(pc.red(`  ❌ pi update failed`));
       return installed;
@@ -309,6 +306,14 @@ export async function sync(dryRun = false): Promise<SyncAction[]> {
   }
 
   console.log(pc.green("\n  Sync complete.\n"));
+
+  // Run pi update for git-sourced packages (pd can't version-check git commits)
+  if (!dryRun) {
+    const hasGitPkgs = Object.values(manifest.packages).some(p =>
+      p.rating !== "disabled" && (p.source.startsWith("git:") || p.source.startsWith("http"))
+    );
+    if (hasGitPkgs) await Bun.$`pi update`.nothrow().quiet();
+  }
 
   if (!dryRun) await reconcileOrphans(manifest);
 
