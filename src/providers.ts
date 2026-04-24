@@ -90,9 +90,14 @@ export const customProvider: Provider = {
 
       console.log(`  [${stepName}] ${expanded}`);
       try {
-        await $`sh -c ${expanded}`.quiet();
+        const result = await $`sh -c ${expanded}`.nothrow();
+        if (result.exitCode !== 0) {
+          const errOut = (result.stderr.toString() + result.stdout.toString()).trim();
+          const hint = errOut.split("\n").filter(l => l.trim()).slice(-5).join("\n  ");
+          throw new Error(`Step '${stepName}' failed (exit ${result.exitCode}):\n  ${hint}`);
+        }
       } catch (e) {
-        throw new Error(`Step '${stepName}' failed for ${name}: ${e}`);
+        throw new Error(e instanceof Error ? e.message : `Step '${stepName}' failed for ${name}: ${e}`);
       }
     }
 
