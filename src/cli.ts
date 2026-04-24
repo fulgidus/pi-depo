@@ -142,11 +142,12 @@ const main = defineCommand({
     add: defineCommand({
       meta: { name: "add", description: "Install a package, add to kit.yml and push to gist" },
       args: {
-        source: { type: "positional", description: "Package source (e.g. npm:foo, git:github.com/user/repo, or just foo)", required: true },
+        source: { type: "positional", description: "Package source (npm:foo, git:github.com/user/repo, or just foo)", required: true },
         rating: { type: "string", alias: "r", description: "Rating: core, useful (default), debatable", default: "useful" },
+        subpath: { type: "string", alias: "s", description: "Skill subpath in repo (e.g. skills/diagram-design) - marks as skill type" },
       },
       async run({ args }) {
-        await addPackage(args.source as string, (args.rating as "core" | "useful" | "debatable") ?? "useful");
+        await addPackage(args.source as string, (args.rating as "core" | "useful" | "debatable") ?? "useful", args.subpath as string | undefined);
       },
     }),
 
@@ -155,9 +156,10 @@ const main = defineCommand({
       args: {
         source: { type: "positional", description: "Package source", required: true },
         rating: { type: "string", alias: "r", description: "Rating: core, useful (default), debatable", default: "useful" },
+        subpath: { type: "string", alias: "s", description: "Skill subpath in repo" },
       },
       async run({ args }) {
-        await addPackage(args.source as string, (args.rating as "core" | "useful" | "debatable") ?? "useful");
+        await addPackage(args.source as string, (args.rating as "core" | "useful" | "debatable") ?? "useful", args.subpath as string | undefined);
       },
     }),
 

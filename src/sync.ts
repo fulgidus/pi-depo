@@ -588,13 +588,49 @@ export async function saveManifestFile(manifest: KitManifest): Promise<void> {
 }
 
 // ─── Add command ───────────────────────────────────────────
-export async function addPackage(source: string, rating: "core" | "useful" | "debatable" = "useful"): Promise<void> {
-  // Normalize: bare name -> npm:name
+export async function addPackage(
+  source: string,
+  rating: "core" | "useful" | "debatable" = "useful",
+  skillSubpath?: string,
+): Promise<void> {
   const normalizedSource = source.includes(":") ? source : `npm:${source}`;
+  const isGit = normalizedSource.startsWith("git:") || normalizedSource.startsWith("http");
+  const isNpm = normalizedSource.startsWith("npm:");
 
-  // Derive name: last path segment of the specifier
+  // For git sources without --subpath: ask what type it is
+  let resolvedSubpath = skillSubpath;
+  let installType: "pi-native" | "skill" | undefined = skillSubpath ? "skill" : undefined;
+
+  if (isGit && !skillSubpath) {
+    const prompts = (await import("prompts")).default;
+    const { type } = await prompts({
+      type: "select",
+      name: "type",
+      message: `What type is ${normalizedSource}?`,
+      choices: [
+        { title: "pi-native  - pi installs and manages it (git clone to ~/.pi/agent/git/)", value: "pi-native" },
+        { title: "skill      - copy a subfolder to ~/.pi/agent/skills/", value: "skill" },
+      ],
+    }, { onCancel: () => process.exit(0) });
+
+    installType = type;
+
+    if (type === "skill") {
+      const { subpath } = await prompts({
+        type: "text",
+        name: "subpath",
+        message: "Skill subpath in repo (e.g. skills/diagram-design, leave empty for root):",
+      }, { onCancel: () => process.exit(0) });
+      resolvedSubpath = subpath || undefined;
+    }
+  }
+
+  // Derive name
   const spec = normalizedSource.replace(/^(npm:|git:|local:)/, "");
-  const name = spec.split("/").pop()?.split("@")[0] ?? spec;
+  const rawName = resolvedSubpath
+    ? resolvedSubpath.split("/").pop()!
+    : spec.split("/").pop()?.split("@")[0] ?? spec;
+  const name = rawName;
 
   const manifest = await loadManifest();
   if (manifest.packages[name]) {
@@ -602,21 +638,41 @@ export async function addPackage(source: string, rating: "core" | "useful" | "de
     return;
   }
 
-  // Install via pi
   console.log(pc.cyan(`  Installing ${name}...`));
-  const result = await Bun.$`pi install ${normalizedSource}`.quiet().nothrow();
-  if (result.exitCode !== 0) {
-    const raw = result.stderr.toString() + result.stdout.toString();
-    // Pick the single most informative line
-    const lines = raw.split("\n").map(l => l.replace(/^npm error /, "").trim()).filter(Boolean);
-    const useful = lines.find(l => l.includes("404") || l.includes("403") || l.includes("Not found") || l.includes("failed"))
-      ?? lines[0] ?? "install failed";
-    console.log(pc.red(`  ❌ ${name}: ${useful}`));
-    return;
+
+  if (installType === "skill" || resolvedSubpath) {
+    const { skillProvider } = await import("./providers.js");
+    try {
+      await skillProvider.install(name, {
+        source: normalizedSource,
+        rating,
+        type: "skill",
+        skill_subpath: resolvedSubpath,
+      });
+    } catch (e) {
+      console.log(pc.red(`  ❌ ${name}: ${e instanceof Error ? e.message : e}`));
+      return;
+    }
+  } else {
+    // pi-native: let pi handle it (npm or git)
+    const result = await Bun.$`pi install ${normalizedSource}`.quiet().nothrow();
+    if (result.exitCode !== 0) {
+      const raw = result.stderr.toString() + result.stdout.toString();
+      const lines = raw.split("\n").map(l => l.replace(/^npm error /, "").trim()).filter(Boolean);
+      const useful = lines.find(l => l.includes("404") || l.includes("403") || l.includes("Not found") || l.includes("failed"))
+        ?? lines[0] ?? "install failed";
+      console.log(pc.red(`  ❌ ${name}: ${useful}`));
+      return;
+    }
   }
 
-  // Add to kit.yml
-  manifest.packages[name] = { source: normalizedSource, rating };
+  // Save to kit.yml
+  const entry: PackageManifest = { source: normalizedSource, rating };
+  if (installType && installType !== "pi-native") entry.type = installType;
+  if (resolvedSubpath) entry.skill_subpath = resolvedSubpath;
+  manifest.packages[name] = entry;
+  await saveManifestFile(manifest);
+  console.log(pc.green(`  ✅ ${name} added as ${rating}${installType === "skill" ? " (skill)" : ""}.`));
   await saveManifestFile(manifest);
   console.log(pc.green(`  ✅ ${name} added as ${rating}.`));
 
