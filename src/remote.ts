@@ -64,14 +64,14 @@ export async function login(provider: RemoteProvider = "github"): Promise<void> 
 
   if (!config.profiles) config.profiles = {};
   if (!config.profiles.default) {
-    config.profiles.default = { provider, user, repo: "gists", path: "pi/kit.yml" };
+    config.profiles.default = { provider, user, repo: "gists", path: "pi-depo.yml" };
     config.active_profile = "default";
   }
 
   // Auto-discover existing gist with kit.yml on this account
   if (provider === "github" && !config.profiles.default.gist_id) {
     console.log("  Searching for existing kit.yml gist...");
-    const gistId = await findKitGist(token, config.profiles.default.path ?? "pi/kit.yml");
+    const gistId = await findKitGist(token, config.profiles.default.path ?? "pi-depo.yml");
     if (gistId) {
       config.profiles.default.gist_id = gistId;
       console.log(`  Found existing gist: ${gistId}`);
@@ -116,10 +116,23 @@ export async function pushManifest(kitYmlContent: string): Promise<void> {
 
   const token = config.auth[`${profile.provider}_token`]!;
   const lockContent = await readLocalLock();
-  const kitPath = profile.path ?? "pi/kit.yml";
+  const kitPath = profile.path ?? "pi-depo.yml";
 
   if (profile.provider === "github" && profile.repo === "gists") {
-    const gistId = await pushToGithubGist(token, kitPath, kitYmlContent, lockContent, profile.gist_id);
+    // Ask visibility on first push
+    if (profile.gist_id === undefined && profile.public === undefined) {
+      const prompts = (await import("prompts")).default;
+      const { isPublic } = await prompts({
+        type: "confirm",
+        name: "isPublic",
+        message: "Make this gist public? (public = others can copy your config)",
+        initial: false,
+      }, { onCancel: () => process.exit(0) });
+      profile.public = !!isPublic;
+      await saveConfig(config);
+    }
+    const profileName = config.active_profile ?? "default";
+    const gistId = await pushToGithubGist(token, kitPath, kitYmlContent, lockContent, profile.gist_id, profile.public ?? false, profileName);
     if (gistId && gistId !== profile.gist_id) {
       profile.gist_id = gistId;
       await saveConfig(config);
@@ -143,7 +156,7 @@ export async function pullManifest(): Promise<string> {
   const config = await loadConfig();
   const profile = getActiveProfile(config);
   const token = config.auth?.[`${profile.provider}_token`];
-  const kitPath = profile.path ?? "pi/kit.yml";
+  const kitPath = profile.path ?? "pi-depo.yml";
 
   if (profile.provider === "github" && profile.repo === "gists") {
     if (!token) throw new Error("Not logged in to github. Run 'pd login' first.");
@@ -186,33 +199,42 @@ function getActiveProfile(config: PkitConfig): NonNullable<PkitConfig["profiles"
 // ─── GitHub push (via Contents API) ─────────────────────────────
 // ─── GitHub Gists API ─────────────────────────────────────────────
 async function findKitGist(token: string, kitPath: string): Promise<string | null> {
-  const fileName = kitPath.replace(/\//g, "_");
+  const newName = kitPath.replace(/\//g, "_");
+  const legacyName = "pi_kit.yml";
   try {
     const res = await fetch("https://api.github.com/gists?per_page=100", {
       headers: { Authorization: `token ${token}`, Accept: "application/vnd.github+json" },
     });
     if (!res.ok) return null;
     const gists = await res.json() as Array<{ id: string; files: Record<string, unknown> }>;
-    return gists.find(g => fileName in g.files)?.id ?? null;
+    return gists.find(g => "pi-depo.yml" in g.files || newName in g.files || legacyName in g.files)?.id ?? null;
   } catch { return null; }
 }
 
 async function pushToGithubGist(
-  token: string, kitPath: string, kitYmlContent: string,
-  lockContent: string | null, existingGistId?: string
+  token: string,
+  kitPath: string,
+  kitYmlContent: string,
+  lockContent: string | null,
+  existingGistId?: string,
+  isPublic = false,
+  profileName = "default",
 ): Promise<string> {
-  const fileName = kitPath.replace(/\//g, "_");
-  const files: Record<string, { content: string }> = { [fileName]: { content: kitYmlContent } };
-  if (lockContent) {
-    files[kitPath.replace(/kit\.yml$/, "kit.lock.json").replace(/\//g, "_")] = { content: lockContent };
-  }
+  const files: Record<string, { content: string }> = { "pi-depo.yml": { content: kitYmlContent } };
+  if (lockContent) files["pi-depo.lock.json"] = { content: lockContent };
+  const description = `pi-depo-${profileName}`;
   const headers = { Authorization: `token ${token}`, Accept: "application/vnd.github+json", "Content-Type": "application/json" };
   if (existingGistId) {
-    const res = await fetch(`https://api.github.com/gists/${existingGistId}`, { method: "PATCH", headers, body: JSON.stringify({ files }) });
+    const res = await fetch(`https://api.github.com/gists/${existingGistId}`, {
+      method: "PATCH", headers, body: JSON.stringify({ files, description }),
+    });
     if (!res.ok) throw new Error(`Gist update failed: ${res.status} ${await res.text()}`);
     return existingGistId;
   }
-  const res = await fetch("https://api.github.com/gists", { method: "POST", headers, body: JSON.stringify({ files, public: false, description: "pd - pi-depo config" }) });
+  const res = await fetch("https://api.github.com/gists", {
+    method: "POST", headers,
+    body: JSON.stringify({ files, public: isPublic, description }),
+  });
   if (!res.ok) throw new Error(`Gist create failed: ${res.status} ${await res.text()}`);
   return (await res.json() as { id: string }).id;
 }
@@ -224,8 +246,9 @@ async function pullFromGithubGist(token: string, kitPath: string, gistId?: strin
   });
   if (!res.ok) throw new Error(`Failed to pull gist: ${res.status}`);
   const data = await res.json() as { files: Record<string, { content: string }> };
-  const file = data.files[kitPath.replace(/\//g, "_")];
-  if (!file) throw new Error(`File not found in gist ${gistId}`);
+  // Try new name first, then legacy names
+  const file = data.files["pi-depo.yml"] ?? data.files["pi_kit.yml"] ?? data.files[kitPath.replace(/\//g, "_")];
+  if (!file) throw new Error(`No pi-depo.yml found in gist ${gistId}`);
   return file.content;
 }
 
@@ -374,7 +397,7 @@ export async function listProfiles(): Promise<void> {
 
   for (const [name, profile] of Object.entries(profiles)) {
     const marker = name === active ? "→" : " ";
-    console.log(`  ${marker} ${name}: ${profile.provider}:${profile.user}/${profile.repo}/${profile.path ?? "pi/kit.yml"}`);
+    console.log(`  ${marker} ${name}: ${profile.provider}:${profile.user}/${profile.repo}/${profile.path ?? "pi-depo.yml"}`);
   }
 }
 

@@ -13,12 +13,12 @@ import { pullManifest } from "./remote.js";
 const MAX_UPDATE_ATTEMPTS = 3;
 
 // ─── Update pi agent itself ─────────────────────────────
-async function updatePiAgent(): Promise<void> {
+async function updatePiAgent(): Promise<string | null> {
   try {
     const viewResult = await Bun.$`npm view @mariozechner/pi-coding-agent version`.quiet().nothrow();
-    if (viewResult.exitCode !== 0) return;
+    if (viewResult.exitCode !== 0) return null;
     const latest = viewResult.stdout.toString().trim();
-    if (!latest) return;
+    if (!latest) return null;
 
     const listResult = await Bun.$`npm list -g @mariozechner/pi-coding-agent --json`.quiet().nothrow();
     let installed: string | null = null;
@@ -27,15 +27,17 @@ async function updatePiAgent(): Promise<void> {
       installed = data.dependencies?.["@mariozechner/pi-coding-agent"]?.version ?? null;
     } catch { /* ignore */ }
 
-    if (installed === latest) return;
+    if (installed === latest) return installed; // already up to date, return current version
     console.log(pc.yellow(`  ⬆  pi ${installed ?? "?"} → ${latest}, updating...`));
     const result = await Bun.$`npm install -g @mariozechner/pi-coding-agent@${latest}`.nothrow();
     if (result.exitCode === 0) {
       console.log(pc.green(`  ✅ pi updated to ${latest}`));
+      return latest; // return new version
     } else {
       console.log(pc.red(`  ❌ pi update failed`));
+      return installed;
     }
-  } catch { /* network unavailable - skip */ }
+  } catch { return null; }
 }
 
 // ─── Run pi update (git packages + anything not in kit.yml) ───
@@ -199,10 +201,15 @@ export async function loadManifest(cwd?: string): Promise<KitManifest> {
 // ─── Sync command ───────────────────────────────────────────────
 export async function sync(dryRun = false): Promise<SyncAction[]> {
   await selfUpdate(VERSION);
-  const [manifest] = await Promise.all([
+  const [manifest, piVersion] = await Promise.all([
     loadManifest(),
     updatePiAgent(),
   ]);
+
+  // Update pi version in manifest if changed
+  if (piVersion && manifest.meta.pi_version !== piVersion) {
+    manifest.meta.pi_version = piVersion;
+  }
   const errors = validateManifest(manifest);
 
   if (errors.length > 0) {
@@ -292,6 +299,14 @@ export async function sync(dryRun = false): Promise<SyncAction[]> {
 
   // Update lock file
   await updateLock(manifest, actions);
+
+  // If pi version changed, save updated manifest + push
+  if (piVersion && piVersion !== manifest.meta.pi_version) {
+    manifest.meta.pi_version = piVersion;
+  }
+  if (!dryRun) {
+    await saveManifestFile(manifest);
+  }
 
   console.log(pc.green("\n  Sync complete.\n"));
 
