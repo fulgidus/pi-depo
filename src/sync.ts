@@ -525,6 +525,32 @@ async function updateLock(manifest: KitManifest, actions: SyncAction[]): Promise
   await saveLock(lock);
 }
 
+// ─── Remove command ───────────────────────────────────────────
+export async function removePackage(name: string): Promise<void> {
+  const manifest = await loadManifest();
+  const pkg = manifest.packages[name] ?? manifest.mcp_servers[name];
+  if (!pkg) throw new Error(`Package '${name}' not found in kit.yml`);
+
+  // Uninstall from pi
+  console.log(pc.cyan(`  Removing ${name}...`));
+  await Bun.$`pi remove ${pkg.source}`.quiet().nothrow();
+
+  // Remove from kit.yml
+  delete manifest.packages[name];
+  delete manifest.mcp_servers[name];
+  await saveManifestFile(manifest);
+  console.log(pc.green(`  ✅ ${name} removed.`));
+
+  // Push to gist
+  try {
+    const { pushManifest } = await import("./remote.js");
+    const content = await readFile(kitYmlPath(), "utf-8");
+    await pushManifest(content);
+  } catch (e) {
+    console.log(pc.yellow(`  ⚠  Could not push to gist: ${e instanceof Error ? e.message : e}`));
+  }
+}
+
 // ─── Disable / Enable commands ─────────────────────────────────
 export async function disablePackage(name: string, reason?: string): Promise<void> {
   const manifest = await loadManifest();

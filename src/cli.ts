@@ -1,6 +1,6 @@
 import { defineCommand, runMain } from "citty";
 import pc from "picocolors";
-import { sync, status, init, disablePackage, enablePackage, loadManifest, saveManifestFile, addPackage } from "./sync.js";
+import { sync, status, init, disablePackage, enablePackage, loadManifest, saveManifestFile, addPackage, removePackage } from "./sync.js";
 import { login, pushManifest, pullManifest, listProfiles, switchProfile } from "./remote.js";
 import { readFile } from "node:fs/promises";
 import { kitYmlPath } from "./config.js";
@@ -147,6 +147,37 @@ const main = defineCommand({
       },
       async run({ args }) {
         await addPackage(args.source as string, (args.rating as "core" | "useful" | "debatable") ?? "useful");
+      },
+    }),
+
+    a: defineCommand({
+      meta: { name: "a", description: "Alias for add" },
+      args: {
+        source: { type: "positional", description: "Package source", required: true },
+        rating: { type: "string", alias: "r", description: "Rating: core, useful (default), debatable", default: "useful" },
+      },
+      async run({ args }) {
+        await addPackage(args.source as string, (args.rating as "core" | "useful" | "debatable") ?? "useful");
+      },
+    }),
+
+    remove: defineCommand({
+      meta: { name: "remove", description: "Uninstall a package, remove from kit.yml and push to gist" },
+      args: {
+        name: { type: "positional", description: "Package name", required: true },
+      },
+      async run({ args }) {
+        await removePackage(args.name as string);
+      },
+    }),
+
+    rm: defineCommand({
+      meta: { name: "rm", description: "Alias for remove" },
+      args: {
+        name: { type: "positional", description: "Package name", required: true },
+      },
+      async run({ args }) {
+        await removePackage(args.name as string);
       },
     }),
 
