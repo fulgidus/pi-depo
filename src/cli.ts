@@ -224,10 +224,8 @@ const main = defineCommand({
   },
 });
 
-// pd with no subcommand = pd sync
-const subcommands = ["init","sync","status","diff","verify","toggle","upgrade","disable","enable","prune","login","push","pull","profiles","profile"];
-const firstArg = process.argv[2];
-if (!firstArg || (!subcommands.includes(firstArg) && !firstArg.startsWith("-"))) {
+// pd with no args = pd sync, anything else goes to citty
+if (!process.argv[2]) {
   sync().catch(e => { console.error(e); process.exit(1); });
 } else {
   runMain(main);
