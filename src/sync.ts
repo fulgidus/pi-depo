@@ -602,6 +602,84 @@ export async function saveManifestFile(manifest: KitManifest): Promise<void> {
   await writeFile(kitYmlPath(), serializeManifest(manifest), "utf-8");
 }
 
+// ─── Add custom package (interactive steps builder) ────────────────
+async function addCustomPackage(source: string, rating: "core" | "useful" | "debatable"): Promise<void> {
+  const prompts = (await import("prompts")).default;
+
+  const spec = source.replace(/^(npm:|git:|local:)/, "");
+  const name = spec.split("/").pop()?.split("@")[0] ?? spec;
+  const gitUrl = spec.includes("://") ? spec : `https://${spec}`;
+  const defaultCloneDir = `{{home}}/.pi/extensions/${name}`;
+
+  console.log(pc.dim(`\n  Configuring custom install for ${name}...`));
+  console.log(pc.dim(`  Use {{home}} for home dir, {{source}} for the git URL.\n`));
+
+  const answers = await prompts([
+    {
+      type: "text",
+      name: "clone",
+      message: "Clone step:",
+      initial: `git clone ${gitUrl} ${defaultCloneDir}`,
+    },
+    {
+      type: "text",
+      name: "build",
+      message: "Build step (empty to skip):",
+      initial: "",
+    },
+    {
+      type: "text",
+      name: "postinstall",
+      message: "Post-install step (empty to skip):",
+      initial: "",
+    },
+    {
+      type: "text",
+      name: "verify",
+      message: "Verify command (shell cmd, exit 0 = ok, empty to skip):",
+      initial: `test -d ${defaultCloneDir}`,
+    },
+  ], { onCancel: () => process.exit(0) });
+
+  const manifest = await loadManifest();
+  if (manifest.packages[name]) {
+    console.log(pc.yellow(`  ${name} is already in kit.yml.`));
+    return;
+  }
+
+  const steps: Record<string, string> = {};
+  if (answers.clone?.trim()) steps.clone = answers.clone.trim();
+  if (answers.build?.trim()) steps.build = answers.build.trim();
+  if (answers.postinstall?.trim()) steps.postinstall = answers.postinstall.trim();
+
+  const entry: PackageManifest = { source, rating, type: "custom", steps };
+  if (answers.verify?.trim()) {
+    entry.verify = { check: answers.verify.trim(), description: `${name} installed` };
+  }
+
+  // Run install now
+  console.log(pc.cyan(`  Installing ${name}...`));
+  const { customProvider } = await import("./providers.js");
+  try {
+    await customProvider.install(name, entry);
+  } catch (e) {
+    console.log(pc.red(`  ❌ ${name}: ${e instanceof Error ? e.message : e}`));
+    return;
+  }
+
+  manifest.packages[name] = entry;
+  await saveManifestFile(manifest);
+  console.log(pc.green(`  ✅ ${name} added as ${rating} (custom).`));
+
+  try {
+    const { pushManifest } = await import("./remote.js");
+    const content = await readFile(kitYmlPath(), "utf-8");
+    await pushManifest(content);
+  } catch (e) {
+    console.log(pc.yellow(`  ⚠  Could not push to gist: ${e instanceof Error ? e.message : e}`));
+  }
+}
+
 // ─── Add command ───────────────────────────────────────────
 export async function addPackage(
   source: string,
@@ -623,8 +701,9 @@ export async function addPackage(
       name: "type",
       message: `What type is ${normalizedSource}?`,
       choices: [
-        { title: "pi-native  - pi installs and manages it (git clone to ~/.pi/agent/git/)", value: "pi-native" },
+        { title: "pi-native  - pi installs and manages it", value: "pi-native" },
         { title: "skill      - copy a subfolder to ~/.pi/agent/skills/", value: "skill" },
+        { title: "custom     - clone + custom build steps", value: "custom" },
       ],
     }, { onCancel: () => process.exit(0) });
 
@@ -634,9 +713,13 @@ export async function addPackage(
       const { subpath } = await prompts({
         type: "text",
         name: "subpath",
-        message: "Skill subpath in repo (e.g. skills/diagram-design, leave empty for root):",
+        message: "Skill subpath in repo (leave empty for root):",
       }, { onCancel: () => process.exit(0) });
       resolvedSubpath = subpath || undefined;
+    }
+
+    if (type === "custom") {
+      return await addCustomPackage(normalizedSource, rating);
     }
   }
 
