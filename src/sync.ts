@@ -12,10 +12,13 @@ import { pullManifest } from "./remote.js";
 // ─── Self-update pd ───────────────────────────────────────────
 const MAX_UPDATE_ATTEMPTS = 3;
 
+const OLD_PI_PACKAGE = "@mariozechner/pi-coding-agent";
+const PI_PACKAGE = "@earendil-works/pi-coding-agent";
+
 // ─── Update pi agent itself ─────────────────────────────
 async function updatePiAgent(): Promise<string | null> {
   try {
-    const viewResult = await Bun.$`npm view @mariozechner/pi-coding-agent version`.quiet().nothrow();
+    const viewResult = await Bun.$`npm view ${PI_PACKAGE} version`.quiet().nothrow();
     if (viewResult.exitCode !== 0) return null;
     const latest = viewResult.stdout.toString().trim();
     if (!latest) return null;
@@ -24,9 +27,31 @@ async function updatePiAgent(): Promise<string | null> {
     const versionResult = await Bun.$`pi --version`.quiet().nothrow();
     const installed = versionResult.exitCode === 0 ? versionResult.stdout.toString().trim() : null;
 
+    // Detect legacy @mariozechner install and migrate transparently
+    let needsMigration = false;
+    try {
+      const listResult = await Bun.$`npm list -g ${OLD_PI_PACKAGE} --json --depth=0`.quiet().nothrow();
+      if (listResult.exitCode === 0) {
+        const data = JSON.parse(listResult.stdout.toString()) as { dependencies?: Record<string, unknown> };
+        needsMigration = !!(data.dependencies?.[OLD_PI_PACKAGE]);
+      }
+    } catch { /* ignore */ }
+
+    if (needsMigration) {
+      console.log(pc.yellow(`  Migrating pi: ${OLD_PI_PACKAGE} → ${PI_PACKAGE}...`));
+      await Bun.$`npm uninstall -g ${OLD_PI_PACKAGE}`.quiet().nothrow();
+      const result = await Bun.$`npm install -g ${PI_PACKAGE}@${latest}`.nothrow();
+      if (result.exitCode === 0) {
+        console.log(pc.green(`  ✅ pi migrated to ${PI_PACKAGE}@${latest}`));
+        return latest;
+      }
+      console.log(pc.red(`  ❌ pi migration failed`));
+      return installed;
+    }
+
     if (installed === latest) return installed;
     console.log(pc.yellow(`  ⬆  pi ${installed ?? "?"} → ${latest}, updating...`));
-    const result = await Bun.$`npm install -g @mariozechner/pi-coding-agent@${latest}`.nothrow();
+    const result = await Bun.$`npm install -g ${PI_PACKAGE}@${latest}`.nothrow();
     if (result.exitCode === 0) {
       console.log(pc.green(`  ✅ pi updated to ${latest}`));
       return latest;
@@ -850,11 +875,10 @@ export async function init(): Promise<void> {
     }
   }
 
-  // Get current pi version
+  // Get current pi version via pi --version (package-name-agnostic)
   try {
-    const r = await Bun.$`npm list -g @mariozechner/pi-coding-agent --json`.quiet().nothrow();
-    const data = JSON.parse(r.stdout.toString()) as { dependencies?: Record<string, { version: string }> };
-    const v = data.dependencies?.["@mariozechner/pi-coding-agent"]?.version;
+    const versionResult = await Bun.$`pi --version`.quiet().nothrow();
+    const v = versionResult.exitCode === 0 ? versionResult.stdout.toString().trim() : null;
     if (v) manifest.meta.pi_version = v;
   } catch { /* ignore */ }
 
