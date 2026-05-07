@@ -15,6 +15,17 @@ const MAX_UPDATE_ATTEMPTS = 3;
 const OLD_PI_PACKAGE = "@mariozechner/pi-coding-agent";
 const PI_PACKAGE = "@earendil-works/pi-coding-agent";
 
+/** Returns true iff semver a > b (simple x.y.z, no pre-release). */
+function semverGt(a: string, b: string): boolean {
+  const pa = a.split(".").map(Number);
+  const pb = b.split(".").map(Number);
+  for (let i = 0; i < 3; i++) {
+    const diff = (pa[i] ?? 0) - (pb[i] ?? 0);
+    if (diff !== 0) return diff > 0;
+  }
+  return false;
+}
+
 // ─── Update pi agent itself ─────────────────────────────
 async function updatePiAgent(): Promise<string | null> {
   try {
@@ -38,18 +49,22 @@ async function updatePiAgent(): Promise<string | null> {
     } catch { /* ignore */ }
 
     if (needsMigration) {
-      console.log(pc.yellow(`  Migrating pi: ${OLD_PI_PACKAGE} → ${PI_PACKAGE}...`));
+      // During migration, install the new package regardless of version
+      // (old and new namespaces may lag each other briefly)
+      const target = installed && semverGt(installed, latest) ? installed : latest;
+      console.log(pc.yellow(`  Migrating pi: ${OLD_PI_PACKAGE} → ${PI_PACKAGE}@${target}...`));
       await Bun.$`npm uninstall -g ${OLD_PI_PACKAGE}`.quiet().nothrow();
-      const result = await Bun.$`npm install -g ${PI_PACKAGE}@${latest}`.nothrow();
+      const result = await Bun.$`npm install -g ${PI_PACKAGE}@${target}`.nothrow();
       if (result.exitCode === 0) {
-        console.log(pc.green(`  ✅ pi migrated to ${PI_PACKAGE}@${latest}`));
-        return latest;
+        console.log(pc.green(`  ✅ pi migrated to ${PI_PACKAGE}@${target}`));
+        return target;
       }
       console.log(pc.red(`  ❌ pi migration failed`));
       return installed;
     }
 
-    if (installed === latest) return installed;
+    // Never downgrade - only proceed if latest is strictly newer
+    if (installed && !semverGt(latest, installed)) return installed;
     console.log(pc.yellow(`  ⬆  pi ${installed ?? "?"} → ${latest}, updating...`));
     const result = await Bun.$`npm install -g ${PI_PACKAGE}@${latest}`.nothrow();
     if (result.exitCode === 0) {
