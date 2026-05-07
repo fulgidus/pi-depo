@@ -74,3 +74,6 @@ Use conventional commits: `feat:`, `fix:`, `chore:`, `docs:`, `refactor:`.
 
 - TypeScript strict mode has import compatibility warnings with CJS deps (js-yaml, deepmerge, picocolors). These don't affect Bun runtime but `tsc --noEmit` will report errors. Acceptable for now.
 - Codeberg OAuth device flow is not yet implemented - only GitHub works for `pkit login`.
+
+## Portable Brain
+Read .agent/AGENTS.md for memory context, lessons and protocols.

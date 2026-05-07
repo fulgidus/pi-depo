@@ -108,7 +108,7 @@ packages:
 
 ## Commands
 
-```
+```sh
 pd / pd sync          Sync everything (self-update + pi update + install + reconcile)
 pd init               Bootstrap kit.yml from pi list, or import from a public gist
 pd add / pd a         Install a package, add to kit.yml, push gist
