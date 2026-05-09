@@ -50,6 +50,7 @@ export function inferInstallType(pkg: PackageManifest | McpServerManifest): Inst
   // Packages with steps are custom
   if ("steps" in pkg && pkg.steps) return "custom";
   if ("skill_subpath" in pkg && pkg.skill_subpath) return "skill";
+  if ("config_merge" in pkg && pkg.config_merge) return "settings";
   return "pi-native";
 }
 

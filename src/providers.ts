@@ -328,6 +328,130 @@ export const mcpServerProvider: Provider = {
   },
 };
 
+// ─── Settings Provider ───────────────────────────────────────
+export const settingsProvider: Provider = {
+  async install(name: string, pkg: PackageManifest): Promise<void> {
+    if (!pkg.config_merge) {
+      throw new Error(`Settings package ${name} requires config_merge`);
+    }
+    const vars = templateVars();
+    const target = expandTemplate(pkg.config_merge.target, vars);
+    const jsonStr = expandTemplate(pkg.config_merge.json, vars);
+    let jsonPatch: Record<string, unknown>;
+    try {
+      jsonPatch = JSON.parse(jsonStr);
+    } catch {
+      throw new Error(`Invalid JSON in config_merge for ${name}`);
+    }
+    await mergeIntoJsonFile(target, jsonPatch);
+  },
+
+  async remove(name: string, pkg: PackageManifest): Promise<void> {
+    if (!pkg.config_merge) return;
+    const vars = templateVars();
+    const jsonStr = expandTemplate(pkg.config_merge.json, vars);
+    try {
+      const jsonPatch = JSON.parse(jsonStr);
+      const paths = collectLeafPaths(jsonPatch);
+      const { removeKeysFromJson } = await import("./merge.js");
+      const target = expandTemplate(pkg.config_merge.target, vars);
+      await removeKeysFromJson(target, paths);
+    } catch {
+      // best effort
+    }
+  },
+
+  async verify(name: string, pkg: PackageManifest): Promise<boolean> {
+    if (!pkg.config_merge) return false;
+    const vars = templateVars();
+    const target = expandTemplate(pkg.config_merge.target, vars);
+    if (!existsSync(target)) return false;
+
+    const jsonStr = expandTemplate(pkg.config_merge.json, vars);
+    try {
+      const jsonPatch = JSON.parse(jsonStr);
+      const content = await Bun.file(target).text();
+      const currentSettings = JSON.parse(content);
+
+      // Check if all key settings are present
+      for (const [key, expectedValue] of Object.entries(jsonPatch)) {
+        const keys = key.split(".");
+        let value: unknown = currentSettings;
+        for (const k of keys) {
+          if (value && typeof value === "object" && k in value) {
+            value = (value as Record<string, unknown>)[k];
+          } else {
+            return false;
+          }
+        }
+        if (JSON.stringify(value) !== JSON.stringify(expectedValue)) {
+          return false;
+        }
+      }
+      return true;
+    } catch {
+      return false;
+    }
+  },
+
+  async status(name: string, pkg: PackageManifest): Promise<PackageStatus> {
+    if (pkg.rating === "disabled") return "disabled";
+    const verified = await settingsProvider.verify(name, pkg);
+    return verified ? "synced" : "missing";
+  },
+};
+
+// ─── Extension Provider ─────────────────────────────────────────
+export const extensionProvider: Provider = {
+  async install(name: string, pkg: PackageManifest): Promise<void> {
+    const vars = templateVars();
+    const source = parseSource(expandTemplate(pkg.source, vars));
+    const target = join(piExtensionsDir(), name);
+
+    if (source.type === "git") {
+      const tmpDir = `/tmp/pd-ext-${name}-${Date.now()}`;
+      const gitUrl = source.spec.includes("://")
+        ? source.spec
+        : `https://${source.spec}`;
+      const refArg = source.ref ? `--branch ${source.ref}` : "";
+
+      try {
+        await $`git clone --depth 1 ${refArg || ""} ${gitUrl} ${tmpDir}`.quiet();
+      } catch (e) {
+        throw new Error(`git clone failed for extension ${name}: ${e}`);
+      }
+
+      mkdirSync(target, { recursive: true });
+      cpSync(tmpDir, target, { recursive: true });
+
+      const { rmSync } = await import("node:fs");
+      rmSync(tmpDir, { recursive: true, force: true });
+    } else if (source.type === "local") {
+      const srcPath = expandTemplate(source.spec, vars);
+      cpSync(srcPath, target, { recursive: true });
+    }
+  },
+
+  async remove(name: string, pkg: PackageManifest): Promise<void> {
+    const target = join(piExtensionsDir(), name);
+    if (existsSync(target)) {
+      const { rmSync } = await import("node:fs");
+      rmSync(target, { recursive: true, force: true });
+    }
+  },
+
+  async verify(name: string, _pkg: PackageManifest): Promise<boolean> {
+    const target = join(piExtensionsDir(), name);
+    return existsSync(target);
+  },
+
+  async status(name: string, pkg: PackageManifest): Promise<PackageStatus> {
+    if (pkg.rating === "disabled") return "disabled";
+    const verified = await extensionProvider.verify(name, pkg);
+    return verified ? "synced" : "missing";
+  },
+};
+
 // ─── Provider resolver ──────────────────────────────────────────
 export function getProvider(type: InstallType): Provider {
   switch (type) {
@@ -339,6 +463,10 @@ export function getProvider(type: InstallType): Provider {
       return skillProvider;
     case "mcp-server":
       return mcpServerProvider;
+    case "settings":
+      return settingsProvider;
+    case "extension":
+      return extensionProvider;
   }
 }
 
