@@ -2,7 +2,7 @@
 export type Rating = "core" | "useful" | "debatable" | "disabled";
 
 // ─── Install types ──────────────────────────────────────────────
-export type InstallType = "pi-native" | "custom" | "skill" | "mcp-server";
+export type InstallType = "pi-native" | "custom" | "skill" | "extension" | "settings" | "mcp-server";
 
 // ─── Source types ───────────────────────────────────────────────
 export interface NpmSource {

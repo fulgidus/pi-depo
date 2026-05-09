@@ -831,6 +831,7 @@ export async function addPackage(
 }
 
 // ─── Init command ───────────────────────────────────────────────
+
 export async function init(): Promise<void> {
   const prompts = (await import("prompts")).default;
 
@@ -856,27 +857,32 @@ export async function init(): Promise<void> {
 
   console.log(pc.bold("\n  Bootstrapping kit.yml from current Pi installation...\n"));
 
-  // Read pi list output
-  let piListOutput = "";
-  try {
-    const result = await Bun.$`pi list`.quiet();
-    piListOutput = result.text();
-  } catch {
-    console.log(pc.yellow("  ⚠ Pi not found or not installed. Creating empty kit.yml."));
-  }
-
-  // Parse: source lines (2 spaces indent) followed by path lines (4 spaces)
-  const lines = piListOutput.split("\n");
   const manifest: KitManifest = {
     meta: { pi_version: undefined, home: "~" },
     packages: {},
     mcp_servers: {},
   };
 
+  // Get current pi version via pi --version
+  try {
+    const versionResult = await Bun.$`pi --version`.quiet().nothrow();
+    const v = versionResult.exitCode === 0 ? versionResult.stdout.toString().trim() : null;
+    if (v) manifest.meta.pi_version = v;
+  } catch { /* ignore */ }
+
+  // 1. Scan pi list for npm/git packages
+  let piListOutput = "";
+  try {
+    const result = await Bun.$`pi list`.quiet();
+    piListOutput = result.text();
+  } catch {
+    console.log(pc.yellow("  ⚠ Pi not found or not installed."));
+  }
+
+  const lines = piListOutput.split("\n");
   let currentSource: string | null = null;
   for (const line of lines) {
     if (line.startsWith("    ")) {
-      // Path line - we have source + path, add to manifest
       if (currentSource) {
         const parts = line.trim().split("/");
         const name = parts[parts.length - 1]!;
@@ -890,19 +896,195 @@ export async function init(): Promise<void> {
     }
   }
 
-  // Get current pi version via pi --version (package-name-agnostic)
-  try {
-    const versionResult = await Bun.$`pi --version`.quiet().nothrow();
-    const v = versionResult.exitCode === 0 ? versionResult.stdout.toString().trim() : null;
-    if (v) manifest.meta.pi_version = v;
-  } catch { /* ignore */ }
+  // 2. Scan skills from ~/.pi/agent/skills/
+  await scanSkills(manifest);
+
+  // 3. Scan extensions from ~/.pi/agent/extensions/
+  await scanExtensions(manifest);
+
+  // 4. Scan MCP servers from ~/.pi/agent/mcp.json
+  await scanMcpServers(manifest);
+
+  // 5. Scan settings from ~/.pi/agent/settings.json
+  await scanSettings(manifest);
 
   const { serializeManifest } = await import("./manifest.js");
   const content = serializeManifest(manifest);
   await writeFile(kitYmlPath(), content, "utf-8");
 
-  console.log(pc.green(`  ✅ Created kit.yml with ${Object.keys(manifest.packages).length} packages.`));
+  const pkgCount = Object.keys(manifest.packages).length;
+  const mcpCount = Object.keys(manifest.mcp_servers).length;
+  console.log(pc.green(`  ✅ Created kit.yml with ${pkgCount} packages and ${mcpCount} MCP servers.`));
   console.log(pc.dim("  Review and adjust ratings, then run 'pd push' to save to your gist.\n"));
+}
+
+async function scanSkills(manifest: KitManifest): Promise<void> {
+  const { piSkillsDir, templateVars } = await import("./config.js");
+  const { readdir, stat, readFile } = await import("node:fs/promises");
+  const { join } = await import("node:path");
+
+  try {
+    const entries = await readdir(piSkillsDir());
+    for (const entry of entries) {
+      const skillPath = join(piSkillsDir(), entry);
+      const skillStat = await stat(skillPath);
+      if (!skillStat.isDirectory()) continue;
+
+      const skillMdPath = join(skillPath, "SKILL.md");
+      try {
+        const skillContent = await readFile(skillMdPath, "utf-8");
+        // Parse frontmatter description
+        const descMatch = skillContent.match(/^---\ndescription:\s*(.+)/m);
+        const description = descMatch ? descMatch[1] : `Skill: ${entry}`;
+
+        // Use local: source pointing to the skill directory
+        manifest.packages[entry] = {
+          source: `local:${templateVars().home}/.pi/agent/skills/${entry}`,
+          rating: "useful",
+          type: "skill",
+          target: `~/.pi/agent/skills/${entry}`,
+        };
+        console.log(pc.dim(`  Found skill: ${entry}`));
+      } catch {
+        // No SKILL.md, skip
+      }
+    }
+  } catch {
+    // Skills directory doesn't exist
+  }
+}
+
+async function scanExtensions(manifest: KitManifest): Promise<void> {
+  const { piExtensionsDir, templateVars } = await import("./config.js");
+  const { readdir, stat, readFile } = await import("node:fs/promises");
+  const { join } = await import("node:path");
+
+  try {
+    const entries = await readdir(piExtensionsDir());
+    for (const entry of entries) {
+      const extPath = join(piExtensionsDir(), entry);
+      const extStat = await stat(extPath);
+
+      let actualPath = extPath;
+      let extName = entry;
+
+      // If it's a directory, check for index.ts
+      if (extStat.isDirectory()) {
+        const indexPath = join(extPath, "index.ts");
+        try {
+          await stat(indexPath);
+          actualPath = indexPath;
+        } catch {
+          // No index.ts, check for package.json main
+          try {
+            const pkgJsonPath = join(extPath, "package.json");
+            const pkgContent = await readFile(pkgJsonPath, "utf-8");
+            const pkg = JSON.parse(pkgContent);
+            if (pkg.main) {
+              actualPath = join(extPath, pkg.main);
+            }
+          } catch { /* no package.json */ }
+        }
+      }
+
+      // Use local: source
+      const relativePath = actualPath.replace(templateVars().home, "~");
+      manifest.packages[extName] = {
+        source: `local:${templateVars().home}/.pi/agent/extensions/${entry}`,
+        rating: "useful",
+        type: "extension",
+      };
+      console.log(pc.dim(`  Found extension: ${extName}`));
+    }
+  } catch {
+    // Extensions directory doesn't exist
+  }
+}
+
+async function scanMcpServers(manifest: KitManifest): Promise<void> {
+  const { piMcpPath } = await import("./config.js");
+  const { readFile } = await import("node:fs/promises");
+  const { existsSync } = await import("node:fs");
+
+  try {
+    if (!existsSync(piMcpPath())) return;
+    const content = await readFile(piMcpPath(), "utf-8");
+    const mcpConfig = JSON.parse(content);
+
+    const servers = mcpConfig.mcpServers || mcpConfig.mcp_servers || {};
+    for (const [name, config] of Object.entries(servers)) {
+      const cfg = config as Record<string, unknown>;
+      const command = cfg.command as string || "";
+      const args = (cfg.args as string[]) || [];
+      const env = cfg.env as Record<string, string> || {};
+
+      // Create a descriptive source string
+      let source = "";
+      if (command.includes("python")) {
+        source = `python:${args.join(" ")}`;
+      } else if (command.includes("npx")) {
+        source = `npx:${args.join(" ")}`;
+      } else {
+        source = `${command} ${args.join(" ")}`.trim();
+      }
+
+      manifest.mcp_servers[name] = {
+        source,
+        rating: "useful",
+        args,
+        env,
+      };
+      console.log(pc.dim(`  Found MCP server: ${name}`));
+    }
+  } catch {
+    // MCP config doesn't exist or is invalid
+  }
+}
+
+async function scanSettings(manifest: KitManifest): Promise<void> {
+  const { piSettingsPath, templateVars } = await import("./config.js");
+  const { readFile, copyFile } = await import("node:fs/promises");
+  const { existsSync } = await import("node:fs");
+  const { join } = await import("node:path");
+
+  try {
+    if (!existsSync(piSettingsPath())) return;
+    const content = await readFile(piSettingsPath(), "utf-8");
+    const settings = JSON.parse(content);
+
+    // Copy settings to a backup location
+    const backupDir = templateVars().home + "/.pkit/backups";
+    const backupPath = join(backupDir, "settings.json.backup");
+
+    // Create backup directory if needed
+    try {
+      await Bun.$`mkdir -p ${backupDir}`.quiet().nothrow();
+      await copyFile(piSettingsPath(), backupPath);
+    } catch { /* ignore backup errors */ }
+
+    // Extract key settings for kit.yml reference
+    const keySettings: Record<string, unknown> = {};
+    if (settings.defaultProvider) keySettings.defaultProvider = settings.defaultProvider;
+    if (settings.defaultModel) keySettings.defaultModel = settings.defaultModel;
+    if (settings.defaultThinkingLevel) keySettings.defaultThinkingLevel = settings.defaultThinkingLevel;
+    if (settings.skills) keySettings.skills = settings.skills;
+    if (settings.theme) keySettings.theme = settings.theme;
+    if (settings.compaction) keySettings.compaction = settings.compaction;
+
+    // Store settings as a special package
+    manifest.packages["__pi_settings__"] = {
+      source: `local:${templateVars().home}/.pi/agent/settings.json`,
+      rating: "core",
+      type: "settings",
+      config_merge: {
+        target: "{{home}}/.pi/agent/settings.json",
+        json: JSON.stringify(keySettings, null, 2),
+      },
+    };
+    console.log(pc.dim(`  Found settings: ${Object.keys(keySettings).length} key options`));
+  } catch {
+    // Settings doesn't exist or is invalid
+  }
 }
 
 async function initFromPublicGist(ref: string): Promise<void> {
